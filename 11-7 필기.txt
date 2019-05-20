@@ -1,0 +1,1150 @@
+제목 : NCS과정_SQL교육문제_540문제_정성호.pdf
+기한 금요일 !
+
+■ SQL 튜닝 수업
+
+ * SQL 튜닝 목차
+
+	1. SQL 튜닝이란 무엇이고 왜 배워야 하는가 ?
+	2. 인덱스 튜닝
+	3. 조인 튜닝
+	4. 서브쿼리튜닝
+	5. 기타 튜닝 방법들 소개 
+
+
+
+
+
+
+
+■ SQL 튜닝이란 무엇이고 왜 배워야 하는가?
+
+	"데이터를 검색하는 속도를 높이는 기술"
+
+	"서버의 성능도 좋아지지만 데이터가 점점 대용량이 되면서 검색속도가 느려지기 때문에 반드시 데이터 
+	 분석을 위해서 반드시 배워야 할 기술이어서이다."
+
+	예 : 삼성 Display의 경우는 1초 넘어가는 SQL은 무조건 다시 짜게끔 한다. 
+	     (삼성 블럭의 갯수 10000개)
+
+
+
+
+
+
+
+■ 인덱스 튜닝
+
+ * 데이터를 엑세스 하는 방법 2가지
+
+	1. full table scan		    |	/*+ full(테이블명) */
+	2. index scan			    |	
+		- index range scan	    |	/*+ index(테이블명 인덱스명) */
+		- index unique scan	    |	/*+ index(테이블명 인덱스명) */
+		- index full scan	    |	/*+ index_fs(테이블명 인덱스명) */
+		- index fast full scan	    |	/*+ index_ffs(테이블명 인덱스명) */
+		- index skip scan	    |	/*+ index_ss(테이블명 인덱스명) */
+		- index merge scan	    |	/*+ and_equal(테이블명 인덱스명) */
+		- index bitmap merge scan   |	/*+ index_combine(테이블명 인덱스명) */
+
+
+
+
+
+
+
+★ table full scan
+
+	테이블 전체를 스캔하는 데이터 엑세스 방법 
+
+	* full table scan이 인덱스 스캔보다 더 유리한 경우?
+
+		1. 테이블에서 검색하려는 데이터의 양이 많을 때
+			(인덱스를 통해서 데이터를 검색하는 양이 많아서 오히려 느려질 때)
+
+	* full table scan을 할 수 밖에 없는 경우
+
+		1. 병렬처리 할 때
+			예 : select /*+ parallel(e 4) */ empno, ename, sal
+				from emp e;
+
+			  emp 테이블을 4개의 프로세서가 나눠서 읽는다.
+				(차이점 : 책을 1명이 요약, 책을 4명이 같이 요약)
+
+		2. 인덱스를 생성할 때
+
+			예 : create index emp_sal
+				on emp(sal);
+
+		3. 인덱스를 재구성 할때 (테이블이 수정 삭제 되면 인덱스 재구성이 필요 !
+		
+			예 : alter index emp_sal rebuild ;
+
+    ☆인덱스 재구성 테스트
+	"테이블의 데이터를 수정하게 되면 테이블의 데이터는 변경되지만 인덱스는 변경하지 않고 그냥 
+	 남아있게 된다. (ppt 자료 3페이지)
+
+문제 1. 사원 테이블의 이름에 인덱스를 걸고 emp_ename 인덱스에서 데이터를 가져오게끔 아래와 같이 
+	수행하시오 !
+
+	create index emp_ename
+	  on emp(ename);
+
+	select ename, rowid
+	  from emp
+	  where ename > '  ' ;
+
+	=======================================
+	ENAME                ROWID
+	-------------------- ------------------
+	ADAMS                AAAE+GAABAAALCxAAM
+	ALLEN                AAAE+GAABAAALCxAAF
+	BLAKE                AAAE+GAABAAALCxAAB
+	CLARK                AAAE+GAABAAALCxAAC
+	FORD                 AAAE+GAABAAALCxAAJ
+	=======================================
+
+
+문제 2. emp_ename b*tree 인덱스의 leaf 블럭이 몇개가 있는지 확인하시오 !
+	analyze index emp_ename validate structure;
+
+	select name, lf_rows, del_lf_rows
+	  from index_stats;
+
+	===================================================================================
+	NAME                                                            LF_ROWS DEL_LF_ROWS
+	------------------------------------------------------------ ---------- -----------
+	EMP_ENAME                                                            14           0
+	===================================================================================
+
+문제 3. 이름이 SCOTT인 사원의 이름과 월급과 직업을 출력하는데 인덱스를 통해서 테이블을 엑세스하는지 
+	실행계획을 보고 확인하시오 !
+
+	select ename ,sal, job
+	  from emp
+	  where ename = 'SCOTT';
+
+	-------------------------------------------------
+	| Id  | Operation                   | Name      |
+	-------------------------------------------------
+	|   0 | SELECT STATEMENT            |           |
+	|   1 |  TABLE ACCESS BY INDEX ROWID| EMP       |
+	|*  2 |   INDEX RANGE SCAN          | EMP_ENAME |
+	-------------------------------------------------
+
+
+문제 4. 이름이 SCOTT인 사원의 이름과 월급과 직업을 출력하는 SQL을 작성하는데 full table scan이 되게 
+	힌트를 주시오 !
+
+	select /*+ full(emp) */ ename, sal, job
+	  from emp
+	  where ename = 'SCOTT';
+
+	----------------------------------
+	| Id  | Operation         | Name |
+	----------------------------------
+	|   0 | SELECT STATEMENT  |      |
+	|*  1 |  TABLE ACCESS FULL| EMP  |
+	----------------------------------
+
+문제 5. 위의 SQL의 full table scan 실행계획과 인덱스 스캔 실행계획의 블럭의 차이가 얼마나 발생하는지
+	확인하시오 !
+
+	튜닝전 :
+	select /*+ full(emp) */ ename, sal, job
+	  from emp
+	  where ename = 'SCOTT';
+	===================
+	 0  db block gets
+	 4  consistent gets
+	 0  physical reads
+	===================
+	
+	튜닝후 :
+	select /*+ index(emp emp_ename) */ ename, sal, job
+	  from emp
+	  where ename = 'SCOTT';
+	===================
+	0  db block gets
+	3  consistent gets
+	0  physical reads
+	===================
+
+문제 6. 오라클 교육용 데이터중에 가장 큰 sales 테이블을 가지고 아래의 테이블을 생성하시오 !
+	create table sales100
+	as
+	select rownum empno, s.*
+	  from sales s;
+
+	===========================================================================================
+	EMPNO 	PROD_ID  CUST_ID TIME_ID 	CHANNEL_ID  PROMO_ID 	QUANTITY_SOLD 	AMOUNT_SOLD
+	------- -------- ------- -------------- ----------- ----------- --------------- -----------
+	1	13	 987	 1998-01-10	3	    999		1		1232.16
+	2	13	 1660	 1998-01-10	3	    999		1		1232.16
+	3	13	 1762	 1998-01-10	3	    999		1		1232.16
+	4	13	 1843	 1998-01-10	3	    999		1		1232.16
+	5	13	 1948	 1998-01-10	3	    999		1		1232.16
+	===========================================================================================
+
+
+문제 7. sales100의 사원번호가 56071번인 사원의 모든 컬럼을 출력하는 쿼리를 작성하고 읽어들인 블럭의 
+	갯수를 확인하시오 !
+	
+	select *
+	  from sales100
+	  where empno = 56071;
+
+	====================================================================================
+	EMPNO    PROD_ID    CUST_ID TIME_ID  CHANNEL_ID   PROMO_ID QUANTITY_SOLD AMOUNT_SOLD
+	----- ---------- ---------- -------- ---------- ---------- ------------- -----------
+	56071         38       1777 98/06/15          3        999             1       34.06
+	====================================================================================
+
+	=====================
+	   0  db block gets
+	5065  consistent gets
+	5060  physical reads
+	=====================
+
+
+문제 8. sales100의 사원번호에 인덱스를 걸고 위의 SQL을 실행해서 인덱스 스캔을 하는지 확인을 하고 블럭의
+	갯수를 확인하시오 !
+
+	create index sales100_empno
+	on sales100(empno);
+
+	select *
+	  from sales100
+	  where empno = 56071;
+
+	==================
+	0  db block gets
+	5  consistent gets
+	0  physical reads
+	==================
+
+
+
+
+
+
+
+★인덱스 재구성 테스트
+
+문제9. KING의 이름을 JACK으로 변경하고 commit하시오 !
+	update emp
+	set ename = 'JACK'
+	where ename = 'KING';
+
+	commit;
+
+	테이블의 경우는 데이터가 KING ---> JACK 으로 바로 변경이 되나
+	인덱스는 KING 리프블럭 그냥 두고 JACK이라는 리프블럭을 추가한다.
+
+	analyze index emp_ename validate structure;
+
+	select name, lf_rows, del_lf_rows
+	  from index_stats;
+
+	===================================================================================
+	NAME                                                            LF_ROWS DEL_LF_ROWS
+	------------------------------------------------------------ ---------- -----------
+	EMP_ENAME                                                            15           1
+	===================================================================================
+		※ 테이블의 데이터 수는 14개 (인덱스에서는 하나 추가되고 하나 죽었음)
+
+   ☆ 인덱스 재구성 명령어 
+	alter index emp_ename rebuild;
+
+	analyze index emp_ename validate structure;
+
+	select name, lf_rows, del_lf_rows
+	  from index_stats;
+
+	===================================================================================
+	NAME                                                            LF_ROWS DEL_LF_ROWS
+	------------------------------------------------------------ ---------- -----------
+	EMP_ENAME                                                            14           0
+	===================================================================================
+		※ 인덱스가 정리 되었음 !
+		※ 주기적으로 정리를 해줘야 함 !
+
+
+
+
+
+
+
+★ index range scan
+
+문제 10. 월급이 3000인 사원의 이름과 월급을 출력하는 SQL을 작성하는데 실행계획이 index range scan이
+	 되도록 인덱스를 걸고 작성하시오 !
+
+	select /*+ index(emp emp_sal) */ ename, sal
+	  from emp
+	  where sal = 3000;
+
+	===============================
+	ENAME                       SAL
+	-------------------- ----------
+	FORD                       3000
+	SCOTT                      3000
+	===============================
+	
+	-----------------------------------------------
+	| Id  | Operation                   | Name    |
+	-----------------------------------------------
+	|   0 | SELECT STATEMENT            |         |
+	|   1 |  TABLE ACCESS BY INDEX ROWID| EMP     |
+	|*  2 |   INDEX RANGE SCAN          | EMP_SAL |
+	-----------------------------------------------
+		※ 월급이 3000인것들의 범위를 스캔 해서 rowid(페이지번호) 를 통해 테이블에서 원하는
+		   자료를 찾는것
+
+	
+
+	=================================================================
+		인덱스			|		테이블
+	-----------------------------------------------------------------
+	 800 AAAE+GAABAAALCxAAK		      [	AAAE+GAABAAALCxAAA JACK  ] 검색
+	 950 AAAE+GAABAAALCxAAH			AAAE+GAABAAALCxAAB BLAKE
+	1100 AAAE+GAABAAALCxAAM			AAAE+GAABAAALCxAAC CLARK
+	1250 AAAE+GAABAAALCxAAE			AAAE+GAABAAALCxAAD JONES
+	1250 AAAE+GAABAAALCxAAI			AAAE+GAABAAALCxAAE MARTIN
+	1300 AAAE+GAABAAALCxAAN			AAAE+GAABAAALCxAAF ALLEN
+	1500 AAAE+GAABAAALCxAAG			AAAE+GAABAAALCxAAG TURNER
+	1600 AAAE+GAABAAALCxAAF			AAAE+GAABAAALCxAAH JAMES
+	2450 AAAE+GAABAAALCxAAC			AAAE+GAABAAALCxAAI WARD
+	2850 AAAE+GAABAAALCxAAB		----☞[	AAAE+GAABAAALCxAAJ FORD  ] 검색
+	2975 AAAE+GAABAAALCxAAD	      ↗	AAAE+GAABAAALCxAAK SMITH
+      [	3000 AAAE+GAABAAALCxAAJ	]-----  ↗--☞[	AAAE+GAABAAALCxAAL SCOTT ] 검색
+      [	3000 AAAE+GAABAAALCxAAL	]-------	AAAE+GAABAAALCxAAM ADAMS
+      [	5000 AAAE+GAABAAALCxAAA	]		AAAE+GAABAAALCxAAN MILLER
+		스캔
+
+문제 11. 우리반 테이블에 이름에 인덱스를 걸고 아래의 SQL이 인덱스를 통해서 어떻게 테이블의 데이터를
+	 엑세스 하는지 그림으로 그리시오 !
+
+	create index emp2_ename on emp2(ename);
+
+	select ename, age, major
+	  from emp2
+	  where ename = '서일';
+
+	================================================================================
+	ENAME                                                               AGE MAJOR
+	------------------------------------------------------------ ---------- --------
+	서일                                                                 26 심리학과
+	================================================================================
+
+	emp2_ename 인덱스 ---------------------------------------------------emp2 테이블
+
+	select ename, rowid
+	  from emp2
+	  where ename > '  ';
+
+	=================================================================================
+	ENAME	ROWID						ROWID              ENAME
+	------ 	------------------				------------------ ------
+	김건휘	AAAE6LAABAAALDJAAE	       -------------☞[	AAAE6LAABAAALDJAAA 서일	  ]
+	김용식	AAAE6LAABAAALDJAAY	    ↗			AAAE6LAABAAALDJAAB 엄한솔
+	김용원	AAAE6LAABAAALDJAAH	  ↑			AAAE6LAABAAALDJAAC 김준구
+	김준구	AAAE6LAABAAALDJAAC	  ↑			AAAE6LAABAAALDJAAD 김준하
+	김준하	AAAE6LAABAAALDJAAD	  ↑			AAAE6LAABAAALDJAAE 김건휘
+	김진  	AAAE6LAABAAALDJAAb	  ↑			AAAE6LAABAAALDJAAF 이후림
+	김진철	AAAE6LAABAAALDJAAW	  ↑			AAAE6LAABAAALDJAAG 박태균
+	김혜진	AAAE6LAABAAALDJAAM	  ↑			AAAE6LAABAAALDJAAH 김용원
+	박태균	AAAE6LAABAAALDJAAG	↗			AAAE6LAABAAALDJAAI 장보겸
+      [	서일  	AAAE6LAABAAALDJAAA ]----			AAAE6LAABAAALDJAAJ 최재혁
+      [	신선혜	AAAE6LAABAAALDJAAQ ]				AAAE6LAABAAALDJAAK 주소현
+	안우용	AAAE6LAABAAALDJAAX				AAAE6LAABAAALDJAAL 임혜진
+	안혜진	AAAE6LAABAAALDJAAV				AAAE6LAABAAALDJAAM 김혜진
+	엄한솔	AAAE6LAABAAALDJAAB				AAAE6LAABAAALDJAAN 이소진
+	오세희	AAAE6LAABAAALDJAAS				AAAE6LAABAAALDJAAO 정성호
+	유이수	AAAE6LAABAAALDJAAP				AAAE6LAABAAALDJAAP 유이수
+	이상엽	AAAE6LAABAAALDJAAZ				AAAE6LAABAAALDJAAQ 신선혜
+	이서영	AAAE6LAABAAALDJAAR				AAAE6LAABAAALDJAAR 이서영
+	이소진	AAAE6LAABAAALDJAAN				AAAE6LAABAAALDJAAS 오세희
+	이후림	AAAE6LAABAAALDJAAF				AAAE6LAABAAALDJAAT 허석우
+	임혜진	AAAE6LAABAAALDJAAL				AAAE6LAABAAALDJAAU 정지엽
+	장보겸	AAAE6LAABAAALDJAAI				AAAE6LAABAAALDJAAV 안혜진
+	정성호	AAAE6LAABAAALDJAAO				AAAE6LAABAAALDJAAW 김진철
+	정지엽	AAAE6LAABAAALDJAAU				AAAE6LAABAAALDJAAX 안우용
+	주소현	AAAE6LAABAAALDJAAK				AAAE6LAABAAALDJAAY 김용식
+	최원형	AAAE6LAABAAALDJAAa				AAAE6LAABAAALDJAAZ 이상엽
+	최재혁	AAAE6LAABAAALDJAAJ				AAAE6LAABAAALDJAAa 최원형
+	허석우	AAAE6LAABAAALDJAAT				AAAE6LAABAAALDJAAb 김진
+	=================================================================================
+
+
+문제 12. 통신사 컬럼에 인덱스를 생성하시오 !
+	
+	create index emp2_telecom
+	  on emp2(telecom);
+
+문제 13. 이름이 서일이고 통신사가 sk인 학생의 이름과 통신사와 나이와 전공을 출력하시오 !
+
+	select ename, telecom, age, major
+	  from emp2
+	  where ename = '서일' and telecom = 'sk';
+
+	================================================
+	ENAME	TELECOM                     AGE MAJOR
+	------	-------------------- ---------- --------
+	서일	sk                           26 심리학과
+	================================================
+	
+	----------------------------------------------------
+	| Id  | Operation                   | Name         |
+	----------------------------------------------------
+	|   0 | SELECT STATEMENT            |              |
+	|*  1 |  TABLE ACCESS BY INDEX ROWID| EMP2         |
+	|*  2 |   INDEX RANGE SCAN          | EMP2_TELECOM |
+	----------------------------------------------------
+
+		※ 똑똑한 옵티마이져이면 ename을 타는게 더 빠르다는걸 알고 간다
+
+
+문제 14. 아래의 SQL의 인덱스가 한번은 ename의 인덱스를 타게 힌트를 주고 또 한번은 telecom의 인덱스를
+	 타게끔 힌트를 주시오 !
+
+	답1
+	select /*+ index(emp2 emp2_ename) */ ename, telecom, age, major
+	  from emp2
+	  where ename = '서일' and telecom = 'sk';
+
+		--------------------------------------------------
+		| Id  | Operation                   | Name       |
+		--------------------------------------------------
+		|   0 | SELECT STATEMENT            |            |
+		|*  1 |  TABLE ACCESS BY INDEX ROWID| EMP2       |
+		|*  2 |   INDEX RANGE SCAN          | EMP2_ENAME |
+		--------------------------------------------------
+
+	답2
+	select /*+ index(emp2 emp2_telecom) */ ename, telecom, age, major
+	  from emp2
+	  where ename = '서일' and telecom = 'sk';
+
+		----------------------------------------------------
+		| Id  | Operation                   | Name         |
+		----------------------------------------------------
+		|   0 | SELECT STATEMENT            |              |
+		|*  1 |  TABLE ACCESS BY INDEX ROWID| EMP2         |
+		|*  2 |   INDEX RANGE SCAN          | EMP2_TELECOM |
+		----------------------------------------------------
+
+
+문제 15. 아래의 SQL을 튜닝하시오 !
+	튜닝전 : 
+		select ename, telecom, age
+		  from emp2
+		  where lower(telecom) = 'sk';
+
+		----------------------------------
+		| Id  | Operation         | Name |
+		----------------------------------
+		|   0 | SELECT STATEMENT  |      |
+		|*  1 |  TABLE ACCESS FULL| EMP2 |
+		----------------------------------
+		==================
+		0  db block gets
+		4  consistent gets
+		0  physical reads
+		==================
+
+
+	튜닝후 :
+		select ename, telecom, age
+		  from emp2
+		  where telecom in ('sk', 'SK', 'sK', 'Sk' );
+
+		-----------------------------------------------------
+		| Id  | Operation                    | Name         |
+		-----------------------------------------------------
+		|   0 | SELECT STATEMENT             |              |
+		|   1 |  INLIST ITERATOR             |              |
+		|   2 |   TABLE ACCESS BY INDEX ROWID| EMP2         |
+		|*  3 |    INDEX RANGE SCAN          | EMP2_TELECOM |
+		-----------------------------------------------------
+		==================
+		0  db block gets
+		5  consistent gets
+		0  physical reads
+		==================
+
+문제 16. 아래의 sql을 튜닝하시오 !
+	튜닝전 : 
+		select ename, age, telecom
+		  from emp2
+		  where telecom || age = 'sk26';
+
+		----------------------------------
+		| Id  | Operation         | Name |
+		----------------------------------
+		|   0 | SELECT STATEMENT  |      |
+		|*  1 |  TABLE ACCESS FULL| EMP2 |
+		----------------------------------
+		==================
+		0  db block gets
+		4  consistent gets
+		0  physical reads
+		==================
+
+
+	튜닝후 :
+		select ename, age, telecom
+		  from emp2
+		  where telecom = 'sk' and age = 26;
+
+		----------------------------------------------------
+		| Id  | Operation                   | Name         |
+		----------------------------------------------------
+		|   0 | SELECT STATEMENT            |              |
+		|*  1 |  TABLE ACCESS BY INDEX ROWID| EMP2         |
+		|*  2 |   INDEX RANGE SCAN          | EMP2_TELECOM |
+		----------------------------------------------------
+		==================
+		0  db block gets
+		4  consistent gets
+		0  physical reads
+		==================
+
+※ 자리마다 실행계획이 틀려지는 이유?
+
+	자리마다 옵티마이져가 만드는 실행계획이 달라서 이다.
+	왜 다르냐면 ?
+	옵티마이져에게 줘야하는 정보가 부족해서 이다.
+	emp2테이블에 대한 분석정보를 생성해서 알려줘야 한다.
+
+	 - emp2테이블에 대해서 분석하겠다.
+
+	   analyze table emp2 compute statistics;
+
+	 - emp2 테이블의 분석정보가 언제 생성되었는지 확인하는 방법
+	   select table_name, last_analyzed
+	     from user_tables;
+
+		TABLE_NAME                                                   LAST_ANA
+		------------------------------------------------------------ --------
+		EMP09
+		EMP10
+		EMP20
+		EMP50
+		DEPT100
+		EMP700
+		EMP800
+		EMP801
+		DEPT900
+		EMP900
+		EMP434
+		EMP2_BB
+		EMP2                                                         18/11/07
+		WINTER_KINGDOM
+		SHERLOCK
+		POSITIVE
+
+			보통 밤 10시에 자동으로 분석을 한다
+
+
+문제 17. 아래의 SQL을 튜닝하시오 !
+	튜닝전 : 
+		select ename, sal, hiredate
+		  from emp
+		  where to_char ( hiredate, 'rr/mm/dd' ) = '81/11/17';
+
+		========================================
+		ENAME                       SAL HIREDATE
+		-------------------- ---------- --------
+		JACK                       5000 81/11/17
+		========================================
+		----------------------------------
+		| Id  | Operation         | Name |
+		----------------------------------
+		|   0 | SELECT STATEMENT  |      |
+		|*  1 |  TABLE ACCESS FULL| EMP  |
+		----------------------------------
+		==================
+		0  db block gets
+		4  consistent gets
+		0  physical reads
+		==================
+
+	튜닝 후 : 
+		create index emp_hiredate
+		  on emp(hiredate);
+
+		select ename, sal, hiredate
+		  from emp
+		  where hiredate = to_date( '81/11/17', 'rr/mm/dd' );
+
+		========================================
+		ENAME                       SAL HIREDATE
+		-------------------- ---------- --------
+		JACK                       5000 81/11/17
+		========================================
+		----------------------------------------------------
+		| Id  | Operation                   | Name         |
+		----------------------------------------------------
+		|   0 | SELECT STATEMENT            |              |
+		|   1 |  TABLE ACCESS BY INDEX ROWID| EMP          |
+		|*  2 |   INDEX RANGE SCAN          | EMP_HIREDATE |
+		----------------------------------------------------
+		==================
+		0  db block gets
+		3  consistent gets
+		0  physical reads
+		==================
+
+
+
+
+
+
+
+
+
+★ 결합 컬럼 인덱스
+
+	하나의 컬럼으로 인덱스를 구성한게 아니라 여러개의 컬럼으로 인덱스를 구성한 것
+
+	예 : create index emp_deptno_sal
+	       on emp(deptno,sal);
+
+	     select deptno, sal, rowid
+	       from emp
+	       where deptno > 0;
+		========================================
+		    DEPTNO        SAL ROWID
+		---------- ---------- ------------------
+		        10       1300 AAAE+GAABAAALCxAAN
+		        10       2450 AAAE+GAABAAALCxAAC
+		        10       5000 AAAE+GAABAAALCxAAA
+		        20        800 AAAE+GAABAAALCxAAK
+		        20       1100 AAAE+GAABAAALCxAAM
+		        20       2975 AAAE+GAABAAALCxAAD
+		        20       3000 AAAE+GAABAAALCxAAJ
+		        20       3000 AAAE+GAABAAALCxAAL
+		        30        950 AAAE+GAABAAALCxAAH
+		        30       1250 AAAE+GAABAAALCxAAE
+		        30       1250 AAAE+GAABAAALCxAAI
+		        30       1500 AAAE+GAABAAALCxAAG
+		        30       1600 AAAE+GAABAAALCxAAF
+		        30       2850 AAAE+GAABAAALCxAAB
+		========================================
+		-------------------------------------------
+		| Id  | Operation        | Name           |
+		-------------------------------------------
+		|   0 | SELECT STATEMENT |                |
+		|*  1 |  INDEX RANGE SCAN| EMP_DEPTNO_SAL |
+		-------------------------------------------
+			※ INDEX RANGE SCAN이 마지막이라는건 인덱스의 모습이라는 뜻이다
+			※ 이게 결합컬럼 인덱스이다
+			※ 생성될 때 정렬의 순서는 왼쪽 컬럼 부터이다.
+
+문제 18. 아래의 SQL을 튜닝하시오 !
+	 (그룹함수 쓰지 말고 인덱스로만 원하는 결과를 볼 수 있게 하시오 ! )
+	튜닝전 :
+		select deptno, max(sal)
+		  from emp
+		  where deptno = 10
+		  group by deptno;
+		=====================
+		    DEPTNO   MAX(SAL)
+		---------- ----------
+		        10       5000
+		=====================
+		-----------------------------------------------
+		| Id  | Operation            | Name           |
+		-----------------------------------------------
+		|   0 | SELECT STATEMENT     |                |
+		|   1 |  SORT GROUP BY NOSORT|                |
+		|*  2 |   INDEX RANGE SCAN   | EMP_DEPTNO_SAL |
+		-----------------------------------------------
+		===================
+		 0  db block gets
+		 1  consistent gets
+		 0  physical reads
+		===================
+
+	튜닝 후 : 
+		select /*+ index_desc(emp emp_deptno_sal) */ deptno, sal
+		  from emp
+		  where deptno = 10
+		    and rownum = 1;
+		=====================
+		    DEPTNO        SAL
+		---------- ----------
+		        10       5000
+		=====================
+		-------------------------------------------------------
+		| Id  | Operation                    | Name           |
+		-------------------------------------------------------
+		|   0 | SELECT STATEMENT             |                |
+		|*  1 |  COUNT STOPKEY               |                |
+		|*  2 |   INDEX RANGE SCAN DESCENDING| EMP_DEPTNO_SAL |
+		-------------------------------------------------------
+		==================
+		0  db block gets
+		1  consistent gets
+		0  physical reads
+		==================
+
+
+문제 19. 아래의 SQL을 튜닝하시오 !
+	 (필요한 인덱스도 알아서 생성하시오 ! )
+	튜닝전 : 
+		select job, min(sal)
+		  from emp
+		  where job = 'SALESMAN'
+		  group by job;
+		=============================
+		JOB                  MIN(SAL)
+		------------------ ----------
+		SALESMAN                 1250
+		=============================
+		--------------------------------------------
+		| Id  | Operation            | Name        |
+		--------------------------------------------
+		|   0 | SELECT STATEMENT     |             |
+		|   1 |  SORT GROUP BY NOSORT|             |
+		|*  2 |   INDEX RANGE SCAN   | EMP_JOB_SAL |
+		--------------------------------------------
+		==================
+		0  db block gets
+		1  consistent gets
+		0  physical reads
+		==================
+
+	튜닝후 : 
+		create index emp_job_sal
+		  on emp(job, sal);
+
+		select /*+ index(emp emp_job_sal) */ job, sal
+		  from emp
+		  where job = 'SALESMAN'
+		    and rownum = 1;
+		=============================
+		JOB                       SAL
+		------------------ ----------
+		SALESMAN                 1250
+		=============================
+		-----------------------------------------
+		| Id  | Operation         | Name        |
+		-----------------------------------------
+		|   0 | SELECT STATEMENT  |             |
+		|*  1 |  COUNT STOPKEY    |             |
+		|*  2 |   INDEX RANGE SCAN| EMP_JOB_SAL |
+		-----------------------------------------
+		==================
+		0  db block gets
+		1  consistent gets
+		0  physical reads
+		==================
+
+		※이게 왜 튜닝이냐 !
+		  그룹함수를 쓴다는거는 일단 테이블을 모두 봐야하는 것이다.
+
+
+문제 20. 아래의 SQL을 튜닝하시오 !
+	튜닝전 : 
+		select deptno, sum(sal)
+		  from emp
+		  group by deptno;
+		=====================
+		    DEPTNO   SUM(SAL)
+		---------- ----------
+		        30       9400
+		        20      10875
+		        10       8750
+		=====================
+		-----------------------------------
+		| Id  | Operation          | Name |
+		-----------------------------------
+		|   0 | SELECT STATEMENT   |      |
+		|   1 |  HASH GROUP BY     |      |
+		|   2 |   TABLE ACCESS FULL| EMP  |
+		-----------------------------------
+		==================
+		0  db block gets
+		3  consistent gets
+		0  physical reads
+		==================
+
+	튜닝후 :
+		select /*+ index_ffs(emp emp_deptno_sal) */ deptno, sum(sal)
+		  from emp
+		  where deptno >=0
+		  group by deptno;
+		=====================
+		    DEPTNO   SUM(SAL)
+		---------- ----------
+		        30       9400
+		        20      10875
+		        10       8750
+		=====================
+		------------------------------------------------
+		| Id  | Operation             | Name           |
+		------------------------------------------------
+		|   0 | SELECT STATEMENT      |                |
+		|   1 |  HASH GROUP BY        |                |
+		|*  2 |   INDEX FAST FULL SCAN| EMP_DEPTNO_SAL |
+		------------------------------------------------
+		==================
+		0  db block gets
+		3  consistent gets
+		0  physical reads
+		==================
+	※ 그룹함수를 꼭 사용해야 하는 상황이라면 ? 
+	   테이블을 full scan 하지말고 index fast full scan 활용
+
+	※ index fast full scan이 되려면 deptno 또는 sal 에 not null제약이 걸려있어야 한다.
+		alter table emp
+		  modify deptno not null;
+
+	※ 만약 not null 제약을 못걸게된 상황이라면 where 절에 null을 없애는 코드로 짠다
+
+
+문제 21. 아래의 SQL을 튜닝하시오 !
+	 (인덱스와 힌트를 알아서 생성하시오 ! )
+	튜닝전 :
+		select job, count(*)
+		  from emp
+		  group by job;
+		=============================
+		JOB                  COUNT(*)
+		------------------ ----------
+		SALESMAN                    4
+		CLERK                       4
+		PRESIDENT                   1
+		MANAGER                     3
+		ANALYST                     2
+		=============================
+		-----------------------------------
+		| Id  | Operation          | Name |
+		-----------------------------------
+		|   0 | SELECT STATEMENT   |      |
+		|   1 |  HASH GROUP BY     |      |
+		|   2 |   TABLE ACCESS FULL| EMP  |
+		-----------------------------------
+		=============================
+		0  db block gets
+		3  consistent gets
+		0  physical reads
+		=============================
+	
+	튜닝후 : 
+		alter table emp
+		  modify job not null;
+		
+		select /*+ index_ffs(emp emp_job_sal) */ job, count(*)
+		  from emp
+		  group by job;
+		=============================
+		JOB                  COUNT(*)
+		------------------ ----------
+		CLERK                       4
+		SALESMAN                    4
+		PRESIDENT                   1
+		MANAGER                     3
+		ANALYST                     2
+		=============================
+		---------------------------------------------
+		| Id  | Operation             | Name        |
+		---------------------------------------------
+		|   0 | SELECT STATEMENT      |             |
+		|   1 |  HASH GROUP BY        |             |
+		|   2 |   INDEX FAST FULL SCAN| EMP_JOB_SAL |
+		---------------------------------------------
+		==================
+		0  db block gets
+		3  consistent gets
+		0  physical reads
+		==================
+
+
+
+
+
+
+
+
+
+★ 결합 컬럼 인덱스의 특징
+	" 결합 컬럼 인덱스의 첫번째 컬럼이 where 절에 존재해야 결합 컬럼 인덱스를 엑세스 할 수 있다."
+
+    * scott유저가 가지고 있는 인덱스 리스트 조회
+	select index_name, column_name, column_position
+	  from user_ind_columns;
+
+		===============================================
+		INDEX_NAME 	COLUMN_NAME 	COLUMN_POSITION
+		--------------	-----------	---------------
+		EMP2_ENAME	ENAME			      1
+		EMP2_TELECOM	TELECOM			      1
+		EMP_DEPTNO_SAL	SAL			      2
+		EMP_DEPTNO_SAL	DEPTNO			      1
+		EMP_ENAME	ENAME			      1
+		EMP_HIREDATE	HIREDATE		      1
+		EMP_JOB_SAL	SAL			      2
+		EMP_JOB_SAL	JOB			      1
+		EMP_SAL	SAL				      1
+		SALES100_EMPNO	EMPNO			      1
+		===============================================
+
+===============================================================
+ * 다시 demobld 스크립트 돌리세요 !
+
+create index emp_deptno_sal
+  on emp(deptno, sal);
+
+select index_name, column_name, column_position
+  from user_ind_columns
+  where table_name = 'EMP'
+  order by index_name, column_position;
+		
+		INDEX_NAME 	COLUMN_NAME 	COLUMN_POSITION
+		--------------	-----------	---------------
+		EMP_DEPTNO_SAL	DEPTNO			      1
+		EMP_DEPTNO_SAL	SAL			      2
+===============================================================
+
+
+문제 22. 월급이 1250인 사원의 이름과 월급과 부서번호를 출력하고 실행계획을 확인하시오!
+
+	select ename, sal, deptno
+	  from emp
+	  where sal = 1250;
+		==========================================
+		ENAME                       SAL     DEPTNO
+		-------------------- ---------- ----------
+		MARTIN                     1250         30
+		WARD                       1250         30
+		==========================================
+		----------------------------------
+		| Id  | Operation         | Name |
+		----------------------------------
+		|   0 | SELECT STATEMENT  |      |
+		|*  1 |  TABLE ACCESS FULL| EMP  |
+		----------------------------------
+		==================
+		0  db block gets
+		4  consistent gets
+		0  physical reads
+		==================
+			※ where 절에 결합 컬럼 인덱스의 첫번째 컬럼이 없어서 TABLE ACCESS FULL
+			   했다.
+	
+	※ 현업에서의 인덱스는 대부분 결합컬럼 인덱스가 많다 단일 컬럼 인덱스는 많이 없다 !
+
+	select /*+ index_ss(emp emp_deptno_sal) */ ename, sal, deptno
+	  from emp
+	  where sal = 1250;
+		==========================================
+		ENAME                       SAL     DEPTNO
+		-------------------- ---------- ----------
+		MARTIN                     1250         30
+		WARD                       1250         30
+		==========================================
+		------------------------------------------------------
+		| Id  | Operation                   | Name           |
+		------------------------------------------------------
+		|   0 | SELECT STATEMENT            |                |
+		|   1 |  TABLE ACCESS BY INDEX ROWID| EMP            |
+		|*  2 |	  INDEX SKIP SCAN           | EMP_DEPTNO_SAL |
+		------------------------------------------------------
+		==================
+		0  db block gets
+		4  consistent gets
+		0  physical reads
+		==================
+			※ 설명 : 스킵스캔은 인덱스를 처음부터 스캔하는데 순서가
+				  1컬럼(10)에서 2컬럼 1250값을 스캔 ---> 없음
+				  1컬럼(20)에서 2컬럼 1250값을 스캔 ---> 없음
+				  1컬럼(30)에서 2컬럼 1250값을 스캔 ---> 1250 찾음
+				  ---->1컬럼(30)에서는 스캔 끝! 건너뛰기!
+
+			 참고 !	    DEPTNO        SAL
+				---------- ----------
+				        10       1300 <--스캔
+				        10       2450 <--스캔
+				        10       5000 <--스캔
+				---------------------
+				        20        800 <--스캔
+				        20       1100 <--스캔
+				        20       2975 <--스캔
+				        20       3000 <--스캔
+				        20       3000 <--스캔
+				---------------------
+				        30        950 <--스캔
+				        30       1250 <--스캔 찾음
+				        30       1250 <--스캔 찾음
+				        30       1500 <--skip
+				        30       1600 <--skip
+				        30       2850 <--skip
+
+
+문제 23. 아래의 SQL을 튜닝하시오 !
+	튜닝전 :
+	drop index emp_deptno_sal;
+
+	create index emp_job_sal
+	  on emp(job, sal);
+
+	select ename, job, sal, deptno
+	  from emp
+	  where sal = 3000;
+		=============================================================
+		ENAME                JOB                       SAL     DEPTNO
+		-------------------- ------------------ ---------- ----------
+		FORD                 ANALYST                  3000         20
+		SCOTT                ANALYST                  3000         20
+		=============================================================
+		----------------------------------
+		| Id  | Operation         | Name |
+		----------------------------------
+		|   0 | SELECT STATEMENT  |      |
+		|*  1 |  TABLE ACCESS FULL| EMP  |
+		----------------------------------
+		==================
+		0  db block gets
+		4  consistent gets
+		0  physical reads
+		==================
+
+	튜닝후 : 
+		select /*+ index_ss(emp emp_job_sal) */ ename, job, sal, deptno
+		  from emp
+		  where sal = 3000;
+		=============================================================
+		ENAME                JOB                       SAL     DEPTNO
+		-------------------- ------------------ ---------- ----------
+		FORD                 ANALYST                  3000         20
+		SCOTT                ANALYST                  3000         20
+		=============================================================
+		---------------------------------------------------
+		| Id  | Operation                   | Name        |
+		---------------------------------------------------
+		|   0 | SELECT STATEMENT            |             |
+		|   1 |  TABLE ACCESS BY INDEX ROWID| EMP         |
+		|*  2 |   INDEX SKIP SCAN           | EMP_JOB_SAL |
+		---------------------------------------------------
+		==================
+		 0  db block gets
+		 4  consistent gets
+		 0  physical reads
+		==================
+
+
+문제 24. demobld를 돌리고 이름에 index를 거시오 
+	 그리고 아래의 SQL을 튜닝하시오 !
+
+	튜닝전 :
+		create index emp_ename
+		  on emp(ename);
+	
+		select ename, sal, job, deptno
+		  from emp
+		  where ename like '%EN%'
+		     or ename like '%IN%';
+		=============================================================
+		ENAME                       SAL JOB                    DEPTNO
+		-------------------- ---------- ------------------ ----------
+		KING                       5000 PRESIDENT                  10
+		MARTIN                     1250 SALESMAN                   30
+		ALLEN                      1600 SALESMAN                   30
+		=============================================================
+		----------------------------------
+		| Id  | Operation         | Name |
+		----------------------------------
+		|   0 | SELECT STATEMENT  |      |
+		|*  1 |  TABLE ACCESS FULL| EMP  |
+		----------------------------------
+		==================
+		0  db block gets
+		4  consistent gets
+		0  physical reads
+		==================
+	튜닝후 :
+		1. 이름에 EN 또는 IN을 포함하고 있는 사원들의 데이터의 rowid를 emp_ename 에서
+		   빠르게 스캔해서 가져오는 쿼리를 만든다.
+		2. 위의 쿼리를 in line view로 만들고 rowid를 연결고리로 해서 emp와 조인한다.
+
+		select e.ename, e.sal, e.job, e.deptno
+		  from emp e, ( select /*+ index_ffs(emp emp_ename) */ rowid
+		                  from emp
+		                  where ename like '%EN%'
+		                     or ename like '%IN%') r
+		  where e.rowid = r.rowid;
+
+		=============================================================
+		ENAME                       SAL JOB                    DEPTNO
+		-------------------- ---------- ------------------ ----------
+		KING                       5000 PRESIDENT                  10
+		MARTIN                     1250 SALESMAN                   30
+		ALLEN                      1600 SALESMAN                   30
+		=============================================================
+		----------------------------------
+		| Id  | Operation         | Name |
+		----------------------------------
+		|   0 | SELECT STATEMENT  |      |
+		|*  1 |  TABLE ACCESS FULL| EMP  |
+		----------------------------------
+		==================
+		0  db block gets
+		3  consistent gets
+		0  physical reads
+		==================
+
+		@demobld
+		create index emp_ename
+		  on emp(ename);
+
+		alter table emp
+		  modify ename not null;
+
+		select /*+ rowid(e) use_nl(v e) */ e.ename, e.sal, e.job, e.deptno
+		  from emp e, ( select /*+ no_merge index_ffs(emp emp_ename) */ rowid
+		                  from emp
+		                  where ename like '%EN%'
+		                     or ename like '%IN%') r
+		  where e.rowid = r.rowid;
+
+		※ 데이터를 분석해놓으면 분석할수록 14건밖에 안되는 데이터를 인덱스를 쓰는게 더 아깝다 그래서
+		   no_merge 가 없으면 inline view를 해체한다 그래서 no merge를 써서 해체하지 못하게 한다
+
+		※ no_merge 힌트 ? in line view를 해체하지 말아라 !
+
+		-------------------------------------------------
+		| Id  | Operation                   | Name      |
+		-------------------------------------------------
+		|   0 | SELECT STATEMENT            |           |
+		|   1 |  NESTED LOOPS               |           |
+		|   2 |   VIEW                      |           |
+		|*  3 |    INDEX FAST FULL SCAN     | EMP_ENAME |
+		|   4 |   TABLE ACCESS BY USER ROWID| EMP       |
+		-------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

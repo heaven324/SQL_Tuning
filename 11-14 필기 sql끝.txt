@@ -1,0 +1,630 @@
+■ SQL 튜닝 목차
+
+	7. 기타 SQL 튜닝 ----> SQL 재작성 방법
+
+	조인 순서의 중요성, 조인 힌트, 인덱스 관련 힌트들을 알면 SQL 튜닝을 할 수는 있는데
+	
+
+	1. 로지컬 옵티마이저 제어하는 힌트
+
+	2. SQL 재작성
+
+
+
+
+
+■ 기타 SQL 튜닝
+
+
+
+★ 로지컬 옵티머이저를 제어하는 힌트
+
+				SQL
+				↓
+			Query Transformer (로지컬 옵티마이저) ---> SQL 변경
+				↓
+		   힌트 →  옵티마이저  ← 테이블 분석 정보(통계정보)
+				↓
+			     실행계획
+				↓
+			       실행
+
+
+☆ Query Transformer (로지컬 옵티마이저)를 제어하는 힌트
+
+	1. no_merge, merge
+		* no_merge : view나 in line view를 해체하지 말아라 ~
+		* merge    : view나 in line view를 해체하라 ~
+
+	2. no_unnest, nest
+		* no_unnest : 서브쿼리로 수행해라 ~
+		* unnest    : 서브쿼리를 조인문으로 수행해라 ~
+
+	3. expand_gset_union : grouping sets 을 union으로 변경해라 ~
+
+      ★4. no_query_transformation : 로지컬 옵티마이저에게 쿼리 변경하지 말라고 하는 힌트 ★
+
+
+
+문제 100. 이름과 부서위치와 월급을 출력하는 view를 생성하시오 !
+	(view 이름은 emp100으로 하세요 )
+
+	create view emp100
+	as
+	select e.ename, d.loc, e.sal
+	  from emp e, dept d
+	  where e.deptno = d.deptno;
+
+	select * from emp100;
+
+
+문제 101. emp100과 salgrade를 조인해서 이름과 월급과 부서위치와 급여등급을 출력하시오 !
+
+	select e.ename, e.sal, e.loc, s.grade
+	  from emp100 e, salgrade s
+	  where e.sal between s.losal and s.hisal;
+
+			↓   Query transformer가 view를 해체하고 ~
+
+	select e.ename, e.sal, d.loc, s.grade
+	  from emp e, dept d, salgrade s
+	  where e.deptno = d.deptno
+	    and e.sal between s.losal and s.hisal;
+		----------------------------------------------------------------------------------
+		| Id  | Operation             | Name     | Rows  | Bytes | Cost (%CPU)| Time     |
+		----------------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT      |          |     1 |    93 |     8  (13)| 00:00:01 |
+		|*  1 |  HASH JOIN            |          |     1 |    93 |     8  (13)| 00:00:01 |
+		|   2 |   MERGE JOIN CARTESIAN|          |    20 |  1200 |     5   (0)| 00:00:01 |
+		|   3 |    TABLE ACCESS FULL  | DEPT     |     4 |    84 |     2   (0)| 00:00:01 |
+		|   4 |    BUFFER SORT        |          |     5 |   195 |     3   (0)| 00:00:01 |
+		|   5 |     TABLE ACCESS FULL | SALGRADE |     5 |   195 |     1   (0)| 00:00:01 |
+		|   6 |   TABLE ACCESS FULL   | EMP      |    14 |   462 |     2   (0)| 00:00:01 |
+		----------------------------------------------------------------------------------
+			※ 실행계획에 emp100이 없다 ??? 로지컬 옵티마이저가 emp100 뷰를 알아서 해체 했다!
+
+
+	지금 상태의 최선의 튜닝
+		select /*+ leading(s e) use_nl(e) */ 
+			e.ename, e.sal, e.loc, s.grade
+		  from emp100 e, salgrade s
+		  where e.sal between s.losal and s.hisal;
+		----------------------------------------------------------------------------------
+		| Id  | Operation             | Name     | Rows  | Bytes | Cost (%CPU)| Time     |
+		----------------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT      |          |     1 |    93 |     8  (13)| 00:00:01 |
+		|*  1 |  HASH JOIN            |          |     1 |    93 |     8  (13)| 00:00:01 |
+		|   2 |   MERGE JOIN CARTESIAN|          |    20 |  1200 |     5   (0)| 00:00:01 |
+		|   3 |    TABLE ACCESS FULL  | DEPT     |     4 |    84 |     2   (0)| 00:00:01 |
+		|   4 |    BUFFER SORT        |          |     5 |   195 |     3   (0)| 00:00:01 |
+		|   5 |     TABLE ACCESS FULL | SALGRADE |     5 |   195 |     1   (0)| 00:00:01 |
+		|   6 |   TABLE ACCESS FULL   | EMP      |    14 |   462 |     2   (0)| 00:00:01 |
+		----------------------------------------------------------------------------------
+			※ 옵티마이저가 SQL을 해체해버리기 때문에 힌트가 무용지물이 되어 버린다.
+
+
+
+문제 102. 아래의 SQL의 힌트가 작동되도록 새로운 힌트를 주시오 !
+
+		select /*+ leading(s e) use_nl(e) */ 
+			e.ename, e.sal, e.loc, s.grade
+		  from emp100 e, salgrade s
+		  where e.sal between s.losal and s.hisal;
+	
+				↓
+
+		select /*+ no_merge(e1) leading(s e1) use_nl(e1) */ 
+			e1.ename, e1.sal, e1.loc, s.grade
+		  from emp100 e1, salgrade s
+		  where e1.sal between s.losal and s.hisal;
+		---------------------------------------------------------------------------------
+		| Id  | Operation            | Name     | Rows  | Bytes | Cost (%CPU)| Time     |
+		---------------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT     |          |     1 |    67 |    25  (12)| 00:00:01 |
+		|   1 |  NESTED LOOPS        |          |     1 |    67 |    25  (12)| 00:00:01 |
+		|   2 |   TABLE ACCESS FULL  | SALGRADE |     5 |   195 |     2   (0)| 00:00:01 |
+		|*  3 |   VIEW               | EMP100   |     1 |    28 |     5  (20)| 00:00:01 |
+		|*  4 |    HASH JOIN         |          |    14 |   756 |     5  (20)| 00:00:01 |
+		|   5 |     TABLE ACCESS FULL| DEPT     |     4 |    84 |     2   (0)| 00:00:01 |
+		|   6 |     TABLE ACCESS FULL| EMP      |    14 |   462 |     2   (0)| 00:00:01 |
+		---------------------------------------------------------------------------------
+			※ no_merge를 썻더니 뷰가 해체되지 않고 원하는 실행계획이 나왔다.
+
+
+
+문제 103. 위의 실행계획에서 emp100안의 emp와 dept의 조인순서를 변경하시오 !
+
+		select /*+ no_merge(e1) leading(s e1) use_nl(e1) 
+			   leading(e1.e e1.d) use_nl(e1.d) */
+			e1.ename, e1.sal, e1.loc, s.grade
+		  from emp100 e1, salgrade s
+		  where e1.sal between s.losal and s.hisal;
+		---------------------------------------------------------------------------------
+		| Id  | Operation            | Name     | Rows  | Bytes | Cost (%CPU)| Time     |
+		---------------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT     |          |     1 |    67 |    42   (0)| 00:00:01 |
+		|   1 |  NESTED LOOPS        |          |     1 |    67 |    42   (0)| 00:00:01 |
+		|   2 |   TABLE ACCESS FULL  | SALGRADE |     5 |   195 |     2   (0)| 00:00:01 |
+		|*  3 |   VIEW               | EMP100   |     1 |    28 |     8   (0)| 00:00:01 |
+		|   4 |    NESTED LOOPS      |          |    14 |   756 |     8   (0)| 00:00:01 |
+		|   5 |     TABLE ACCESS FULL| EMP      |    14 |   462 |     2   (0)| 00:00:01 |
+		|*  6 |     TABLE ACCESS FULL| DEPT     |     1 |    21 |     0   (0)| 00:00:01 |
+		---------------------------------------------------------------------------------
+			※ 뷰는 생성시 쿼리를 날려 테이블처럼 보여주는 건데 안의 쿼리를 수정하고싶다면
+			   e1.[뷰 속의 테이블 별칭]을 이용해서 수정이 가능하다.
+			   그래서 처음에 쿼리에 e를 쓰지않고 이것을 위해 e1으로 수정한것 !
+
+
+문제 104. 위의 SQL로 아래의 실행계획이 나오게 하시오 !
+		----------------------------------------------------------------------------------
+		| Id  | Operation             | Name     | Rows  | Bytes | Cost (%CPU)| Time     |
+		----------------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT      |          |     1 |    67 |     9  (34)| 00:00:01 |
+		|   1 |  MERGE JOIN           |          |     1 |    67 |     9  (34)| 00:00:01 |
+		|   2 |   SORT JOIN           |          |    14 |   392 |     6  (34)| 00:00:01 |
+		|   3 |    VIEW               | EMP100   |    14 |   392 |     5  (20)| 00:00:01 |
+		|*  4 |     HASH JOIN         |          |    14 |   756 |     5  (20)| 00:00:01 |
+		|   5 |      TABLE ACCESS FULL| EMP      |    14 |   462 |     2   (0)| 00:00:01 |
+		|   6 |      TABLE ACCESS FULL| DEPT     |     4 |    84 |     2   (0)| 00:00:01 |
+		|*  7 |   FILTER              |          |       |       |            |          |
+		|*  8 |    SORT JOIN          |          |     5 |   195 |     3  (34)| 00:00:01 |
+		|   9 |     TABLE ACCESS FULL | SALGRADE |     5 |   195 |     2   (0)| 00:00:01 |
+		----------------------------------------------------------------------------------
+		select /*+ no_merge(e1) leading(e1 s) use_merge(s) 
+			   leading(e1.d e1.e) use_hash(e1.e) full(e1.d) full(e1.e) */
+			e1.ename, e1.sal, e1.loc, s.grade
+		  from emp100 e1, salgrade s
+		  where e1.sal between s.losal and s.hisal;
+	
+
+문제 105. 위의 SQL의 emp100을 in line view로 풀어서 작성하시오 !
+
+	select e1.ename, e1.sal, e1.loc, s.grade
+	  from (select e.ename, e.sal, d.loc
+		  from emp e, dept d
+		  where e.deptno = d.deptno) e1, salgrade s
+	  where e1.sal between s.losal and s.hisal;
+	----------------------------------------------------------------------------------
+	| Id  | Operation             | Name     | Rows  | Bytes | Cost (%CPU)| Time     |	
+	----------------------------------------------------------------------------------
+	|   0 | SELECT STATEMENT      |          |     1 |    93 |     8  (13)| 00:00:01 |
+	|*  1 |  HASH JOIN            |          |     1 |    93 |     8  (13)| 00:00:01 |
+	|   2 |   MERGE JOIN CARTESIAN|          |    20 |  1200 |     5   (0)| 00:00:01 |
+	|   3 |    TABLE ACCESS FULL  | DEPT     |     4 |    84 |     2   (0)| 00:00:01 |
+	|   4 |    BUFFER SORT        |          |     5 |   195 |     3   (0)| 00:00:01 |
+	|   5 |     TABLE ACCESS FULL | SALGRADE |     5 |   195 |     1   (0)| 00:00:01 |
+	|   6 |   TABLE ACCESS FULL   | EMP      |    14 |   462 |     2   (0)| 00:00:01 |
+	----------------------------------------------------------------------------------
+
+
+문제 106. 위의 SQL의 in line view를 해체하지 못하도록 힌트를 작성하시오 !
+
+	첫번째 방법
+		select /*+ no_merge(e1) */ e1.ename, e1.sal, e1.loc, s.grade
+		  from (select e.ename, e.sal, d.loc
+			  from emp e, dept d
+			  where e.deptno = d.deptno) e1, salgrade s
+		  where e1.sal between s.losal and s.hisal;
+		-----------------------------------------------------------------------------------
+		| Id  | Operation              | Name     | Rows  | Bytes | Cost (%CPU)| Time     |
+		-----------------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT       |          |     1 |    67 |     9  (34)| 00:00:01 |
+		|   1 |  MERGE JOIN            |          |     1 |    67 |     9  (34)| 00:00:01 |
+		|   2 |   SORT JOIN            |          |     5 |   195 |     3  (34)| 00:00:01 |
+		|   3 |    TABLE ACCESS FULL   | SALGRADE |     5 |   195 |     2   (0)| 00:00:01 |
+		|*  4 |   FILTER               |          |       |       |            |          |
+		|*  5 |    SORT JOIN           |          |    14 |   392 |     6  (34)| 00:00:01 |
+		|   6 |     VIEW               |          |    14 |   392 |     5  (20)| 00:00:01 |
+		|*  7 |      HASH JOIN         |          |    14 |   756 |     5  (20)| 00:00:01 |
+		|   8 |       TABLE ACCESS FULL| DEPT     |     4 |    84 |     2   (0)| 00:00:01 |
+		|   9 |       TABLE ACCESS FULL| EMP      |    14 |   462 |     2   (0)| 00:00:01 |
+		-----------------------------------------------------------------------------------
+
+	두번째 방법
+		select e1.ename, e1.sal, e1.loc, s.grade
+		  from (select /*+ no_merge */ e.ename, e.sal, d.loc
+			  from emp e, dept d
+			  where e.deptno = d.deptno) e1, salgrade s
+		  where e1.sal between s.losal and s.hisal;
+		-----------------------------------------------------------------------------------
+		| Id  | Operation              | Name     | Rows  | Bytes | Cost (%CPU)| Time     |
+		-----------------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT       |          |     1 |    67 |     9  (34)| 00:00:01 |
+		|   1 |  MERGE JOIN            |          |     1 |    67 |     9  (34)| 00:00:01 |
+		|   2 |   SORT JOIN            |          |     5 |   195 |     3  (34)| 00:00:01 |
+		|   3 |    TABLE ACCESS FULL   | SALGRADE |     5 |   195 |     2   (0)| 00:00:01 |
+		|*  4 |   FILTER               |          |       |       |            |          |
+		|*  5 |    SORT JOIN           |          |    14 |   392 |     6  (34)| 00:00:01 |
+		|   6 |     VIEW               |          |    14 |   392 |     5  (20)| 00:00:01 |
+		|*  7 |      HASH JOIN         |          |    14 |   756 |     5  (20)| 00:00:01 |
+		|   8 |       TABLE ACCESS FULL| DEPT     |     4 |    84 |     2   (0)| 00:00:01 |
+		|   9 |       TABLE ACCESS FULL| EMP      |    14 |   462 |     2   (0)| 00:00:01 |
+		-----------------------------------------------------------------------------------
+
+
+
+=====================================
+@demobld
+
+create index emp_ename on emp(ename);
+=====================================
+
+
+문제 107. 이름에 EN 또는 IN을 포함하고 있는 사원들의 이름과 월급과 직업과 부서번호를 출력하시오 !
+
+	튜닝 전 :
+		select ename, sal, job, deptno
+		  from emp
+		  where ename like '%EN%'
+		     or ename like '%IN%';
+		--------------------------------------------------------------------------
+		| Id  | Operation         | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		--------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT  |      |     3 |   117 |     2   (0)| 00:00:01 |
+		|*  1 |  TABLE ACCESS FULL| EMP  |     3 |   117 |     2   (0)| 00:00:01 |
+		--------------------------------------------------------------------------
+
+	튜닝 후(1) :
+		select e.ename, e.sal, e.job, e.deptno
+		  from emp e, (select /*+ index_ffs(emp emp_ename) */ rowid rn
+				 from emp
+				 where ename like '%EN%'
+		  		    or ename like '%IN%') v
+		  where e.rowid = v.rn;
+		--------------------------------------------------------------------------
+		| Id  | Operation         | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		--------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT  |      |     3 |   153 |     2   (0)| 00:00:01 |
+		|*  1 |  TABLE ACCESS FULL| EMP  |     3 |   153 |     2   (0)| 00:00:01 |
+		--------------------------------------------------------------------------
+			※ in line view를 자꾸 해체해버려서 힌트가 소용없다,,
+
+	튜닝 후(2) : 
+		select e.ename, e.sal, e.job, e.deptno
+		  from emp e, (select /*+ no_merge index_ffs(emp emp_ename) */ rowid rn
+				 from emp
+				 where ename like '%EN%'
+		  		    or ename like '%IN%') v
+		  where e.rowid = v.rn;
+		----------------------------------------------------------------------------
+		| Id  | Operation           | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		----------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT    |      |     3 |   189 |     5  (20)| 00:00:01 |
+		|*  1 |  HASH JOIN          |      |     3 |   189 |     5  (20)| 00:00:01 |
+		|   2 |   VIEW              |      |     3 |    36 |     2   (0)| 00:00:01 |
+		|*  3 |    TABLE ACCESS FULL| EMP  |     3 |    57 |     2   (0)| 00:00:01 |
+		|   4 |   TABLE ACCESS FULL | EMP  |    14 |   714 |     2   (0)| 00:00:01 |
+		----------------------------------------------------------------------------
+		0  db block gets
+		7  consistent gets
+		0  physical reads
+			※ in line view 해체하지 못하게 힌트를 썼다
+
+	튜닝 후(3) :
+		select /*+ leading(v e) use_nl(e) */ e.ename, e.sal, e.job, e.deptno
+		  from emp e, (select /*+ no_merge index_ffs(emp emp_ename) */ rowid rn
+				 from emp
+				 where ename like '%EN%'
+		  		    or ename like '%IN%') v
+		  where e.rowid = v.rn;
+		------------------------------------------------------------------------------------
+		| Id  | Operation                   | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		------------------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT            |      |     3 |   189 |     5   (0)| 00:00:01 |
+		|   1 |  NESTED LOOPS               |      |     3 |   189 |     5   (0)| 00:00:01 |
+		|   2 |   VIEW                      |      |     3 |    36 |     2   (0)| 00:00:01 |
+		|*  3 |    TABLE ACCESS FULL        | EMP  |     3 |    57 |     2   (0)| 00:00:01 |
+		|   4 |   TABLE ACCESS BY USER ROWID| EMP  |     1 |    51 |     1   (0)| 00:00:01 |
+		------------------------------------------------------------------------------------
+		0  db block gets
+		6  consistent gets
+		0  physical reads
+			※ 테이블이 작기 때문에 nested loop join을 수행하게 힌트를 썼다.
+
+
+문제 108. 사원번호, 이름, 월급, 사원테이블의 최대월급,
+				사원테이블의 최소월급,
+				사원테이블의 토탈월급,
+				사원테이블의 평균월급을 출력하시오 !
+
+	튜닝 전 :
+		select empno, ename, sal,
+			(select max(sal) from emp) 최대월급,
+			(select min(sal) from emp) 최소월급,
+			(select sum(sal) from emp) 토탈월급,
+			(select round(avg(sal)) from emp) 평균월급
+		  from emp;
+		---------------------------------------------------------------------------
+		| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		---------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT   |      |    14 |   462 |     2   (0)| 00:00:01 |
+		|   1 |  SORT AGGREGATE    |      |     1 |    13 |            |          |
+		|   2 |   TABLE ACCESS FULL| EMP  |    14 |   182 |     2   (0)| 00:00:01 |
+		|   3 |  SORT AGGREGATE    |      |     1 |    13 |            |          |
+		|   4 |   TABLE ACCESS FULL| EMP  |    14 |   182 |     2   (0)| 00:00:01 |
+		|   5 |  SORT AGGREGATE    |      |     1 |    13 |            |          |
+		|   6 |   TABLE ACCESS FULL| EMP  |    14 |   182 |     2   (0)| 00:00:01 |
+		|   7 |  SORT AGGREGATE    |      |     1 |    13 |            |          |
+		|   8 |   TABLE ACCESS FULL| EMP  |    14 |   182 |     2   (0)| 00:00:01 |
+		|   9 |  TABLE ACCESS FULL | EMP  |    14 |   462 |     2   (0)| 00:00:01 |
+		---------------------------------------------------------------------------
+		          0  db block gets
+		         16  consistent gets
+		          0  physical reads
+
+	튜닝 후(내꺼) :
+		select e.empno, e.ename, e.sal, s.mx, s.mn, s.su, s.ag
+		  from emp e, (select max(sal) mx, min(sal) mn, sum(sal) su, round(avg(sal)) ag
+				 from emp) s;
+		-----------------------------------------------------------------------------
+		| Id  | Operation            | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		-----------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT     |      |    14 |  1190 |     4   (0)| 00:00:01 |
+		|   1 |  NESTED LOOPS        |      |    14 |  1190 |     4   (0)| 00:00:01 |
+		|   2 |   VIEW               |      |     1 |    52 |     2   (0)| 00:00:01 |
+		|   3 |    SORT AGGREGATE    |      |     1 |    13 |            |          |
+		|   4 |     TABLE ACCESS FULL| EMP  |    14 |   182 |     2   (0)| 00:00:01 |
+		|   5 |   TABLE ACCESS FULL  | EMP  |    14 |   462 |     2   (0)| 00:00:01 |
+		-----------------------------------------------------------------------------
+		          0  db block gets
+		          7  consistent gets
+		          0  physical reads
+
+	튜닝 후(선생님) :
+		select empno, ename, sal, substr(total,1,10 ) 최대,
+					  substr(total,11,10 ) 최소,
+					  substr(total,21,10 ) 토탈,
+					  substr(total,31,10 ) 평균
+		  from (select empno, ename, sal, 
+				(select rpad(max(sal),10,' ')||
+					rpad(min(sal),10,' ')||
+					rpad(sum(sal),10,' ')||
+					rpad(round(avg(sal)),10,' ')
+				   from emp) total
+			  from emp);
+		---------------------------------------------------------------------------
+		| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		---------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT   |      |    14 |   462 |     2   (0)| 00:00:01 |
+		|   1 |  SORT AGGREGATE    |      |     1 |    13 |            |          |
+		|   2 |   TABLE ACCESS FULL| EMP  |    14 |   182 |     2   (0)| 00:00:01 |
+		|   3 |  TABLE ACCESS FULL | EMP  |    14 |   462 |     2   (0)| 00:00:01 |
+		---------------------------------------------------------------------------
+		          0  db block gets
+		          7  consistent gets
+		          0  physical reads
+
+	튜닝 후(배운거 활용) : 
+		select empno, ename, sal, substr(total,1,10 ) 최대,
+					  substr(total,11,10 ) 최소,
+					  substr(total,21,10 ) 토탈,
+					  substr(total,31,10 ) 평균
+		  from (select /*+ no_merge */ empno, ename, sal, 
+				(select rpad(max(sal),10,' ')||
+					rpad(min(sal),10,' ')||
+					rpad(sum(sal),10,' ')||
+					rpad(round(avg(sal)),10,' ')
+				   from emp) total
+			  from emp);
+		---------------------------------------------------------------------------
+		| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		---------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT   |      |    14 |  1610 |     2   (0)| 00:00:01 |
+		|   1 |  SORT AGGREGATE    |      |     1 |    13 |            |          |
+		|   2 |   TABLE ACCESS FULL| EMP  |    14 |   182 |     2   (0)| 00:00:01 |
+		|   3 |  VIEW              |      |    14 |  1610 |     2   (0)| 00:00:01 |
+		|   4 |   TABLE ACCESS FULL| EMP  |    14 |   462 |     2   (0)| 00:00:01 |
+		---------------------------------------------------------------------------
+		          0  db block gets
+		          7  consistent gets
+		          0  physical reads
+
+
+문제 109. (점심시간 문제) 이름, 주소, 나이, 전공, 우리반 최대나이,
+						  우리반 최소나이,
+						  우리반 토탈나이,
+						  우리반 평균나이를 출력하시오 !
+	풀이1 :
+		select ename, address, age, major, substr(total,1,10 ) 최대,
+						  substr(total,11,10 ) 최소,
+						  substr(total,21,10 ) 토탈,
+						  substr(total,31,10 ) 평균
+		  from (select /*+ no_merge */ ename, address, age, major,
+				(select rpad(max(age),10,' ')||
+					rpad(min(age),10,' ')||
+					rpad(sum(age),10,' ')||
+					rpad(round(avg(age)),10,' ')
+				   from emp2) total
+		  	  from emp2);
+		---------------------------------------------------------------------------
+		| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		---------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT   |      |    28 |  5768 |     2   (0)| 00:00:01 |
+		|   1 |  SORT AGGREGATE    |      |     1 |     2 |            |          |
+		|   2 |   TABLE ACCESS FULL| EMP2 |    28 |    56 |     2   (0)| 00:00:01 |
+		|   3 |  VIEW              |      |    28 |  5768 |     2   (0)| 00:00:01 |
+		|   4 |   TABLE ACCESS FULL| EMP2 |    28 |  1988 |     2   (0)| 00:00:01 |
+		---------------------------------------------------------------------------
+		          0  db block gets
+		          6  consistent gets
+		          0  physical reads
+
+	풀이2 :
+		select e.ename, e.address, e.age, e.major, t.최대, t.최소, t.토탈, t.평균
+		  from emp2 e, (select max(age) 최대, 
+				       min(age) 최소, 
+				       sum(age) 토탈, 
+				       round(avg(age)) 평균
+				  from emp2) t;
+		-----------------------------------------------------------------------------
+		| Id  | Operation            | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		-----------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT     |      |    28 |  3444 |     4   (0)| 00:00:01 |
+		|   1 |  NESTED LOOPS        |      |    28 |  3444 |     4   (0)| 00:00:01 |
+		|   2 |   VIEW               |      |     1 |    52 |     2   (0)| 00:00:01 |
+		|   3 |    SORT AGGREGATE    |      |     1 |     2 |            |          |
+		|   4 |     TABLE ACCESS FULL| EMP2 |    28 |    56 |     2   (0)| 00:00:01 |
+		|   5 |   TABLE ACCESS FULL  | EMP2 |    28 |  1988 |     2   (0)| 00:00:01 |
+		-----------------------------------------------------------------------------
+		          0  db block gets
+		          6  consistent gets
+		          0  physical reads
+
+
+
+
+
+
+
+
+
+★ SQL 재작성
+
+	분석함수를 이용하지 않은 SQL ----> 분석함수를 이용한 SQL
+				     <----
+
+
+문제 110. 아래의 SQL을 분석함수를 사용하지 않는 SQL로 변경하시오 !
+
+	튜닝 후 : 
+		select empno, ename, sal, sum(sal) over (order by sal, empno asc) 누적치
+		  from emp;
+	---------------------------------------------------------------------------
+	| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+	---------------------------------------------------------------------------
+	|   0 | SELECT STATEMENT   |      |    14 |   462 |     3  (34)| 00:00:01 |
+	|   1 |  WINDOW SORT       |      |    14 |   462 |     3  (34)| 00:00:01 |
+	|   2 |   TABLE ACCESS FULL| EMP  |    14 |   462 |     2   (0)| 00:00:01 |
+	---------------------------------------------------------------------------
+	          0  recursive calls
+	          0  db block gets
+	          3  consistent gets
+
+	튜닝 전 : 
+		with emp_sal as (select rownum as rn, e.* 
+				   from (select empno, ename, sal 
+					   from emp 
+					   order by sal) e)
+		select e1.empno, e1.ename, e1.sal,
+		 	(select sum(sal) 
+			   from emp_sal e2
+			   where e2.rn <= e1.rn) 누적치
+		  from emp_sal e1;
+	----------------------------------------------------------------
+	| Id  | Operation                  | Name                      |
+	----------------------------------------------------------------
+	|   0 | SELECT STATEMENT           |                           |
+	|   1 |  SORT AGGREGATE            |                           |
+	|*  2 |   VIEW                     |                           |
+	|   3 |    TABLE ACCESS FULL       | SYS_TEMP_0FD9D6606_356DC0 |
+	|   4 |  TEMP TABLE TRANSFORMATION |                           |
+	|   5 |   LOAD AS SELECT           | SYS_TEMP_0FD9D6606_356DC0 |
+	|   6 |    COUNT                   |                           |
+	|   7 |     VIEW                   |                           |
+	|   8 |      SORT ORDER BY         |                           |
+	|   9 |       TABLE ACCESS FULL    | EMP                       |
+	|  10 |   VIEW                     |                           |
+	|  11 |    TABLE ACCESS FULL       | SYS_TEMP_0FD9D6606_356DC0 |
+	----------------------------------------------------------------
+	          8  db block gets
+	         36  consistent gets
+	          1  physical reads
+
+
+문제 111. 아래의 분석함수를 이용한 SQL을 분석함수를 이용하지 않은 SQL로 변경하시오 !
+
+	튜닝후 :
+		select deptno, empno, ename, sal,
+			sum(sal) over ( partition by deptno order by empno) 누적치
+		  from emp;
+	---------------------------------------------------------------------------
+	| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+	---------------------------------------------------------------------------
+	|   0 | SELECT STATEMENT   |      |    14 |   644 |     3  (34)| 00:00:01 |
+	|   1 |  WINDOW SORT       |      |    14 |   644 |     3  (34)| 00:00:01 |
+	|   2 |   TABLE ACCESS FULL| EMP  |    14 |   644 |     2   (0)| 00:00:01 |
+	---------------------------------------------------------------------------
+	          0  db block gets
+	          3  consistent gets
+	          0  physical reads
+
+	튜닝전 :
+		select deptno, empno, ename, sal, (select sum(sal)
+						     from emp ee
+						     where ee.deptno = e.deptno
+						       and ee.empno <= e.empno) 누적치
+		  from emp e
+		  order by deptno, empno;
+	---------------------------------------------------------------------------
+	| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+	---------------------------------------------------------------------------
+	|   0 | SELECT STATEMENT   |      |    14 |   644 |     3  (34)| 00:00:01 |
+	|   1 |  SORT AGGREGATE    |      |     1 |    39 |            |          |
+	|*  2 |   TABLE ACCESS FULL| EMP  |     1 |    39 |     2   (0)| 00:00:01 |
+	|   3 |  SORT ORDER BY     |      |    14 |   644 |     3  (34)| 00:00:01 |
+	|   4 |   TABLE ACCESS FULL| EMP  |    14 |   644 |     2   (0)| 00:00:01 |
+	---------------------------------------------------------------------------
+	          0  db block gets
+	         45  consistent gets
+	          0  physical reads
+
+
+문제 112. 아래의 SQL을 분석함수를 이용하지 않은 SQL로 변경하시오 !
+
+	튜닝 후 :
+		select empno, ename, sal, lag(sal, 1) over (order by sal) 이전행
+		  from emp;
+	---------------------------------------------------------------------------
+	| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+	---------------------------------------------------------------------------
+	|   0 | SELECT STATEMENT   |      |    14 |   462 |     3  (34)| 00:00:01 |
+	|   1 |  WINDOW SORT       |      |    14 |   462 |     3  (34)| 00:00:01 |
+	|   2 |   TABLE ACCESS FULL| EMP  |    14 |   462 |     2   (0)| 00:00:01 |
+	---------------------------------------------------------------------------
+	          0  db block gets
+	          3  consistent gets
+	          0  physical reads
+
+	튜닝 전 :
+		select empno, ename, sal, 
+			(select sal 
+			   from (select rownum rn, e3.*
+		                   from (select * from emp e order by sal) e3) e4
+			   where e4.rn+1 = e2.rn) 이전행
+		  from (select rownum rn, e1.*
+		          from (select * from emp e order by sal) e1) e2;
+	------------------------------------------------------------------------------
+	| Id  | Operation             | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+	------------------------------------------------------------------------------
+	|   0 | SELECT STATEMENT      |      |    14 |   644 |     3  (34)| 00:00:01 |
+	|*  1 |  VIEW                 |      |    14 |   364 |     3  (34)| 00:00:01 |
+	|   2 |   COUNT               |      |       |       |            |          |
+	|   3 |    VIEW               |      |    14 |   182 |     3  (34)| 00:00:01 |
+	|   4 |     SORT ORDER BY     |      |    14 |  1218 |     3  (34)| 00:00:01 |
+	|   5 |      TABLE ACCESS FULL| EMP  |    14 |  1218 |     2   (0)| 00:00:01 |
+	|   6 |  VIEW                 |      |    14 |   644 |     3  (34)| 00:00:01 |
+	|   7 |   COUNT               |      |       |       |            |          |
+	|   8 |    VIEW               |      |    14 |   462 |     3  (34)| 00:00:01 |
+	|   9 |     SORT ORDER BY     |      |    14 |  1218 |     3  (34)| 00:00:01 |
+	|  10 |      TABLE ACCESS FULL| EMP  |    14 |  1218 |     2   (0)| 00:00:01 |
+	------------------------------------------------------------------------------
+	          0  db block gets
+	         45  consistent gets
+	          0  physical reads
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

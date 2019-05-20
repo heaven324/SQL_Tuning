@@ -1,0 +1,841 @@
+문제 43. sales100 테이블의 prod_id에 인덱스를 걸면 더 속도가 빨라지는지 확인하시오 !
+
+	create index sales100_prod_id
+	  on sales100(prod_id);
+
+	create index times100_time_id
+	  on times100(time_id);
+
+		select /*+ leading(p s t) use_nl(s) use_nl(t) */ 
+		       p.prod_name, 
+                       t.CALENDAR_YEAR, 
+                       sum(s.amount_sold)
+		  from   sales100     s,				 
+          		 times100     t,				
+                         products100  p					
+		  where  s.time_id = t.time_id 				
+		    and  s.prod_id = p.prod_id   			
+		    and  t.CALENDAR_YEAR in (2000,2001)			
+		    and  p.prod_name like 'Deluxe%'			
+		    group  by  p.prod_name, t.calendar_year;
+
+		------------------------------------------------------------
+		| Id  | Operation                       | Name             |
+		------------------------------------------------------------
+		|   0 | SELECT STATEMENT                |                  |
+		|   1 |  HASH GROUP BY                  |                  |
+		|   2 |   NESTED LOOPS                  |                  |
+		|   3 |    NESTED LOOPS                 |                  |
+		|   4 |     NESTED LOOPS                |                  |
+		|*  5 |      TABLE ACCESS FULL          | PRODUCTS100      |
+		|   6 |      TABLE ACCESS BY INDEX ROWID| SALES100         |
+		|*  7 |       INDEX RANGE SCAN          | SALES100_PROD_ID |
+		|*  8 |     INDEX RANGE SCAN            | TIMES100_TIME_ID |
+		|*  9 |    TABLE ACCESS BY INDEX ROWID  | TIMES100         |
+		------------------------------------------------------------
+		
+		경   과: 00:00:00.06
+
+
+	create index sales100_time_id
+	  on sales100(time_id);
+
+	create index products100_prod_id
+	  on products100(prod_id);
+
+
+문제 44. 아래의 sql을 튜닝하시오 !
+	(조인 방법은 무조건 nested loop join으로 하고 조인순서는 알아서 결정하고, 인덱스도 알아서 
+	 생성하시오 ! )
+	튜닝전 :
+		SELECT /*+ leading(c s) use_nl(s) */  COUNT(*) 
+		     FROM sales600 s, customers600 c 
+		     WHERE s.cust_id = c.cust_id           
+		     AND c.country_id = 52790  
+		     AND s.time_id BETWEEN TO_DATE('1999/01/01','YYYY/MM/DD')  
+		                       AND TO_DATE('1999/12/31','YYYY/MM/DD');
+
+
+	튜닝후 : 
+		create index sales600_cust_id
+		  on sales600(cust_id);
+
+		create index customers600_cust_id
+		  on customers600(cust_id);
+
+		SELECT /*+ leading(c s) use_nl(s) */  COUNT(*) 
+		     FROM sales600 s, customers600 c 
+		     WHERE s.cust_id = c.cust_id           
+		     AND c.country_id = 52790  
+		     AND s.time_id BETWEEN TO_DATE('1999/01/01','YYYY/MM/DD')  
+		                       AND TO_DATE('1999/12/31','YYYY/MM/DD');
+
+
+	☆☆☆테이블 스페이스 오류가 뜬다면
+	(ORA-01652: unable to extend temp segment by 128 in tablespace SYSTEM
+		alter tablespace system
+	   	add datafile 'c:\system02.dbf' size 300m; )
+
+		==========
+		  COUNT(*)
+		----------
+		    141806
+		==========
+		경   과: 00:00:01.09
+		====================
+		----------------------------------------------------------
+		| Id  | Operation                     | Name             |
+		----------------------------------------------------------
+		|   0 | SELECT STATEMENT              |                  |
+		|   1 |  SORT AGGREGATE               |                  |
+		|   2 |   NESTED LOOPS                |                  |
+		|   3 |    NESTED LOOPS               |                  |
+		|*  4 |     TABLE ACCESS FULL         | CUSTOMERS600     |
+		|*  5 |     INDEX RANGE SCAN          | SALES600_CUST_ID |
+		|*  6 |    TABLE ACCESS BY INDEX ROWID| SALES600         |
+		----------------------------------------------------------
+		=======================
+		     0  db block gets
+		455661  consistent gets
+		  1736  physical reads
+		=======================
+
+
+문제 45. 아래의 SQL의 조인방법은 무조건 nested loop join으로 하되 조인 순서를 결정하고 인덱스도 알아서
+	 생성하시오 !
+
+	튜닝전 : 
+		select e.ename, e.sal, d.loc, e.deptno
+		  from emp e, dept d			/* emp 14건 dept 4건*/
+		  where e.deptno = d.deptno
+		    and e.job = 'SALESMAN'		/* 4건 */
+		    and d.loc = 'CHICAGO';		/* 1건 */ 
+		=====================================================================
+		ENAME                       SAL LOC                            DEPTNO
+		-------------------- ---------- -------------------------- ----------
+		MARTIN                     1250 CHICAGO                            30
+		ALLEN                      1600 CHICAGO                            30
+		TURNER                     1500 CHICAGO                            30
+		WARD                       1250 CHICAGO                            30
+		=====================================================================
+		경   과: 00:00:00.03
+		====================
+		---------------------------------------------------------------------------
+		| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+		---------------------------------------------------------------------------
+		|   0 | SELECT STATEMENT   |      |     1 |    60 |     4   (0)| 00:00:01 |
+		|   1 |  NESTED LOOPS      |      |     1 |    60 |     4   (0)| 00:00:01 |
+		|*  2 |   TABLE ACCESS FULL| DEPT |     1 |    21 |     2   (0)| 00:00:01 |
+		|*  3 |   TABLE ACCESS FULL| EMP  |     1 |    39 |     2   (0)| 00:00:01 |
+		---------------------------------------------------------------------------
+		===================
+		 0  db block gets
+		16  consistent gets
+		 0  physical reads
+		===================
+	튜닝후 : 
+		create index dept_deptno
+		  on dept(deptno);
+		create index emp_deptno
+		  on emp(deptno);
+
+
+		select /*+ leading(d e) use_nl(e) */
+		       e.ename, e.sal, d.loc, e.deptno
+		  from emp e, dept d			/* emp 14건 dept 4건*/
+		  where e.deptno = d.deptno
+		    and e.job = 'SALESMAN'		/* 4건 */
+		    and d.loc = 'CHICAGO';		/* 1건 */ 
+	=====================================================================
+	ENAME                       SAL LOC                            DEPTNO
+	-------------------- ---------- -------------------------- ----------
+	MARTIN                     1250 CHICAGO                            30
+	ALLEN                      1600 CHICAGO                            30
+	TURNER                     1500 CHICAGO                            30
+	WARD                       1250 CHICAGO                            30
+	=====================================================================
+	경   과: 00:00:00.03
+	====================
+	-------------------------------------------------------------------------------------------
+	| Id  | Operation                    | Name       | Rows  | Bytes | Cost (%CPU)| Time     |
+	-------------------------------------------------------------------------------------------
+	|   0 | SELECT STATEMENT             |            |     1 |    60 |     3   (0)| 00:00:01 |
+	|   1 |  NESTED LOOPS                |            |       |       |            |          |
+	|   2 |   NESTED LOOPS               |            |     1 |    60 |     3   (0)| 00:00:01 |
+	|*  3 |    TABLE ACCESS FULL         | DEPT       |     1 |    21 |     2   (0)| 00:00:01 |
+	|*  4 |    INDEX RANGE SCAN          | EMP_DEPTNO |     5 |       |     0   (0)| 00:00:01 |
+	|*  5 |   TABLE ACCESS BY INDEX ROWID| EMP        |     1 |    39 |     1   (0)| 00:00:01 |
+	-------------------------------------------------------------------------------------------
+	===================
+	 0  db block gets
+	18  consistent gets
+	 0  physical reads
+	===================
+
+
+문제 46. 아래의 SQL을 조금 더 튜닝하시오 !
+
+	튜닝전 :
+		SELECT /*+ leading(c s) use_nl(s) */  COUNT(*) 
+		     FROM sales600 s, customers600 c 
+		     WHERE s.cust_id = c.cust_id           
+		     AND c.country_id = 52790  
+		     AND s.time_id BETWEEN TO_DATE('1999/01/01','YYYY/MM/DD')  
+		                       AND TO_DATE('1999/12/31','YYYY/MM/DD');
+	  COUNT(*)
+	----------
+	    141806
+
+	경   과: 00:00:00.43
+	----------------------------------------------------------
+	| Id  | Operation                     | Name             |
+	----------------------------------------------------------
+	|   0 | SELECT STATEMENT              |                  |
+	|   1 |  SORT AGGREGATE               |                  |
+	|   2 |   NESTED LOOPS                |                  |
+	|   3 |    NESTED LOOPS               |                  |
+	|*  4 |     TABLE ACCESS FULL         | CUSTOMERS600     |
+	|*  5 |     INDEX RANGE SCAN          | SALES600_CUST_ID |
+	|*  6 |    TABLE ACCESS BY INDEX ROWID| SALES600         |
+	----------------------------------------------------------
+	          0  db block gets
+	     456976  consistent gets
+	          0  physical reads
+
+	튜닝후 :
+		create index customers600_country_id
+		  on customers600(country_id);
+
+		create index sales600_time_id
+		  on sales600(time_id);
+
+		SELECT /*+ leading(c s) use_nl(s) */  COUNT(*) 
+		     FROM sales600 s, customers600 c 
+		     WHERE s.cust_id = c.cust_id           
+		     AND c.country_id = 52790  
+		     AND s.time_id BETWEEN TO_DATE('1999/01/01','YYYY/MM/DD')  
+		                       AND TO_DATE('1999/12/31','YYYY/MM/DD');
+	  COUNT(*)
+	----------
+	    141806
+	
+	경   과: 00:00:00.48
+	------------------------------------------------------------------
+	| Id  | Operation                      | Name                    |
+	------------------------------------------------------------------
+	|   0 | SELECT STATEMENT               |                         |
+	|   1 |  SORT AGGREGATE                |                         |
+	|   2 |   NESTED LOOPS                 |                         |
+	|   3 |    NESTED LOOPS                |                         |
+	|   4 |     TABLE ACCESS BY INDEX ROWID| CUSTOMERS600            |
+	|*  5 |      INDEX RANGE SCAN          | CUSTOMERS600_COUNTRY_ID |
+	|*  6 |     INDEX RANGE SCAN           | SALES600_CUST_ID        |
+	|*  7 |    TABLE ACCESS BY INDEX ROWID | SALES600                |
+	------------------------------------------------------------------
+	          0  db block gets
+	     456970  consistent gets
+	         42  physical reads
+	
+
+문제 47. 위의 SQL을 hash join으로 변경하시오 !
+	답1
+		SELECT /*+ leading(c s) use_hash(s) */  COUNT(*) 
+		     FROM sales600 s, customers600 c 
+		     WHERE s.cust_id = c.cust_id           
+		     AND c.country_id = 52790  
+		     AND s.time_id BETWEEN TO_DATE('1999/01/01','YYYY/MM/DD')  
+		                       AND TO_DATE('1999/12/31','YYYY/MM/DD');
+	  COUNT(*)
+	----------
+	    141806
+	
+	경   과: 00:00:00.21
+	-----------------------------------------------------------------
+	| Id  | Operation                     | Name                    |
+	-----------------------------------------------------------------    실행순서
+	|   0 | SELECT STATEMENT              |                         |	7
+	|   1 |  SORT AGGREGATE               |                         |	6
+	|*  2 |   HASH JOIN                   |                         |	5
+	|   3 |    TABLE ACCESS BY INDEX ROWID| CUSTOMERS600            |	2
+	|*  4 |     INDEX RANGE SCAN          | CUSTOMERS600_COUNTRY_ID |	1
+	|   5 |    TABLE ACCESS BY INDEX ROWID| SALES600                |	4
+	|*  6 |     INDEX RANGE SCAN          | SALES600_TIME_ID        |	3
+	-----------------------------------------------------------------
+	            0  db block gets
+		15242  consistent gets
+		  658  physical reads
+
+	답2
+		SELECT /*+ leading(c s) use_hash(s) full(c) full(s) */  COUNT(*) 
+		     FROM sales600 s, customers600 c 
+		     WHERE s.cust_id = c.cust_id           
+		     AND c.country_id = 52790  
+		     AND s.time_id BETWEEN TO_DATE('1999/01/01','YYYY/MM/DD')  
+		                       AND TO_DATE('1999/12/31','YYYY/MM/DD');
+	  COUNT(*)
+	----------
+	    141806
+	
+	경   과: 00:00:00.07
+	--------------------------------------------
+	| Id  | Operation           | Name         |
+	--------------------------------------------
+	|   0 | SELECT STATEMENT    |              |
+	|   1 |  SORT AGGREGATE     |              |
+	|*  2 |   HASH JOIN         |              |
+	|*  3 |    TABLE ACCESS FULL| CUSTOMERS600 |
+	|*  4 |    TABLE ACCESS FULL| SALES600     |
+	--------------------------------------------
+	          0  db block gets
+	       6096  consistent gets
+	          0  physical reads
+
+		※ 해쉬조인은 항상 full스캔이 따라다녀야 빠르다 !
+
+
+
+
+
+★해쉬조인의 원리
+	select /*+leading(d e) use_hash(e) full(d) full(e)*/ e.ename, d.loc
+	  from emp e, dept d
+	  where e.deptno = d.deptno;
+	-----------------------------------
+	| Id  | Operation          | Name |
+	-----------------------------------
+	|   0 | SELECT STATEMENT   |      |
+	|*  1 |  HASH JOIN         |      |
+	|   2 |   TABLE ACCESS FULL| DEPT |   <------ 해쉬 테이블  ---> 메모리로 올라가는 테이블
+	|   3 |   TABLE ACCESS FULL| EMP  |   <------ 탐색 테이블  ---> 메모리에 올라가지 않는 테이블
+	-----------------------------------
+					둘다 메모리에 올릴 수는 없다.
+					둘중 하나를 메모리에 올려야 한다면 두개 중 작은 것을 
+					올려야 한다. (조건에 의해서 엑세스 되는 건수가 작은것)
+					테이블이 크면 메모리에 나눠져서 올라가기 때문에 오히려 역효과 !!
+					그래서 leading힌트가 굉장히 중요하다 !
+					앞에 쓴게 해쉬테이블이 된다 !
+					항상 풀테이블 스캔 해야 검색속도가 높아진다.
+					왜냐하면 인덱스는 디스크에 있기 때문에 메모리와 디스크를 
+					왔다갔다해서 더 느려진다 !!
+					해쉬조인을 할때에는 full을 항상 써야한다. 왜냐하면 나도 모르게 
+					인덱스가 걸려있는 경우도 있고 옵티마이져가 멍청해서 다르게
+					할 수도 있기 때문이다.					
+ 					단 ! 탐색테이블에 있는 테이블은 디스크에 있기 때문에 인덱스를 
+					타는게 더 좋을 수 있다.
+					
+		※ 메모리란 ? 컴퓨터의 메모리 칩
+
+
+문제 48. 아래의 sql 을 hash조인으로 수행되게 한 후 최대한 줄인 블럭의 갯수로 검사 받으세요 !
+	튜닝전 :
+		select /*+ leading(p s t) use_nl(s) use_nl(t) */ 
+		       p.prod_name, 
+                       t.CALENDAR_YEAR, 
+                       sum(s.amount_sold)
+		  from   sales100     s,				/* 데이터 918,843건 */ 
+          		 times100     t,				/* 데이터   1,826건 */
+                         products100  p					/* 데이터      72건 */
+		  where  s.time_id = t.time_id 				/* s,t 연결고리 */
+		    and  s.prod_id = p.prod_id   			/* s,p 연결고리 */
+		    and  t.CALENDAR_YEAR in (2000,2001)			/* times100 731건 */
+		    and  p.prod_name like 'Deluxe%'			/* products100 1건 */
+		    group  by  p.prod_name, t.calendar_year;
+	튜닝 후 
+		select /*+ leading(p s t) use_hash(t) full(t)
+			   index(products100 products100_prod_id) */
+		       p.prod_name, 
+                       t.CALENDAR_YEAR, 
+                       sum(s.amount_sold)
+		  from   sales100     s,
+          		 times100     t,
+                         products100  p
+		  where  s.time_id = t.time_id 
+		    and  s.prod_id = p.prod_id
+		    and  t.CALENDAR_YEAR in (2000,2001)
+		    and  p.prod_name like 'Deluxe%'
+		    group  by  p.prod_name, t.calendar_year;
+
+
+문제 49. 아래와 같이 실행계획이 나오게 하시오 !
+	--------------------------------------------
+	| Id  | Operation            | Name        |
+	--------------------------------------------
+	|   0 | SELECT STATEMENT     |             |
+	|   1 |  HASH GROUP BY       |             |
+	|*  2 |   HASH JOIN          |             |
+	|*  3 |    TABLE ACCESS FULL | PRODUCTS100 |
+	|*  4 |    HASH JOIN         |             |
+	|*  5 |     TABLE ACCESS FULL| TIMES100    |
+	|   6 |     TABLE ACCESS FULL| SALES100    |
+	--------------------------------------------
+
+		select /*+ leading(t s p) use_hash(t) full(t) full(p) */
+		       p.prod_name, 
+                       t.CALENDAR_YEAR, 
+                       sum(s.amount_sold)
+		  from   sales100     s,
+          		 times100     t,
+                         products100  p
+		  where  s.time_id = t.time_id 
+		    and  s.prod_id = p.prod_id
+		    and  t.CALENDAR_YEAR in (2000,2001)
+		    and  p.prod_name like 'Deluxe%'
+		    group  by  p.prod_name, t.calendar_year;
+
+	Deluxe Mouse
+	    142334.42
+	Deluxe Mouse
+	     53224.73
+	
+	경   과: 00:00:00.28
+	--------------------------------------------
+	| Id  | Operation            | Name        |
+	--------------------------------------------
+	|   0 | SELECT STATEMENT     |             |
+	|   1 |  HASH GROUP BY       |             |
+	|*  2 |   HASH JOIN          |             |
+	|*  3 |    TABLE ACCESS FULL | PRODUCTS100 |
+	|*  4 |    HASH JOIN         |             |
+	|*  5 |     TABLE ACCESS FULL| TIMES100    |
+	|   6 |     TABLE ACCESS FULL| SALES100    |
+	--------------------------------------------
+	          0  db block gets
+	       5279  consistent gets
+	       5060  physical reads
+
+
+문제 50. 아래와 같이 실행계획이 나오게 하시오 !
+	--------------------------------------------
+	| Id  | Operation            | Name        |
+	--------------------------------------------
+	|   0 | SELECT STATEMENT     |             |
+	|   1 |  HASH GROUP BY       |             |
+	|*  2 |   HASH JOIN          |             |
+	|*  3 |    HASH JOIN         |             |
+	|*  4 |     TABLE ACCESS FULL| TIMES100    |
+	|   5 |     TABLE ACCESS FULL| SALES100    |
+	|*  6 |    TABLE ACCESS FULL | PRODUCTS100 |
+	--------------------------------------------
+		select /*+ leading(t s p) use_hash(p) full(s) full(p) full(t)
+			   no_swap_join_inputs(p) */
+		       p.prod_name, 
+                       t.CALENDAR_YEAR, 
+                       sum(s.amount_sold)
+		  from   sales100     s,
+          		 times100     t,
+                         products100  p
+		  where  s.time_id = t.time_id 
+		    and  s.prod_id = p.prod_id
+		    and  t.CALENDAR_YEAR in (2000,2001)
+		    and  p.prod_name like 'Deluxe%'
+		    group  by  p.prod_name, t.calendar_year;
+
+	Deluxe Mouse
+	    142334.42
+	Deluxe Mouse
+	     53224.73
+	
+	경   과: 00:00:00.28
+	--------------------------------------------
+	| Id  | Operation            | Name        |
+	--------------------------------------------
+	|   0 | SELECT STATEMENT     |             |
+	|   1 |  HASH GROUP BY       |             |
+	|*  2 |   HASH JOIN          |             |
+	|*  3 |    HASH JOIN         |             |
+	|*  4 |     TABLE ACCESS FULL| TIMES100    |
+	|   5 |     TABLE ACCESS FULL| SALES100    |
+	|*  6 |    TABLE ACCESS FULL | PRODUCTS100 |
+	--------------------------------------------
+	          0  db block gets
+	       5279  consistent gets
+	       5277  physical reads
+
+	※ 해쉬조인시 유용한 힌트 2가지 ?
+		1. swap_join_inputs    : 해쉬 테이블을 지정하는 힌트
+		2. no_swap_join_inputs : 탐색 테이블을 지정하는 힌트
+
+
+문제 51. 아래와 같이 실행계획이 출력되게 하시오 !
+	--------------------------------------------
+	| Id  | Operation            | Name        |
+	--------------------------------------------
+	|   0 | SELECT STATEMENT     |             |
+	|   1 |  HASH GROUP BY       |             |
+	|*  2 |   HASH JOIN          |             |
+	|*  3 |    TABLE ACCESS FULL | PRODUCTS100 |
+	|*  4 |    HASH JOIN         |             |
+	|   5 |     TABLE ACCESS FULL| SALES100    |
+	|*  6 |     TABLE ACCESS FULL| TIMES100    |
+	--------------------------------------------
+		select /*+ leading(s t p) use_hash(t) use_hash(p) full(s) full(p) full(t) 
+			   swap_join_inputs(p) */				
+		       p.prod_name, 
+                       t.CALENDAR_YEAR, 
+                       sum(s.amount_sold)
+		  from   sales100     s,
+          		 times100     t,
+                         products100  p
+		  where  s.time_id = t.time_id 
+		    and  s.prod_id = p.prod_id
+		    and  t.CALENDAR_YEAR in (2000,2001)
+		    and  p.prod_name like 'Deluxe%'
+		    group  by  p.prod_name, t.calendar_year;
+
+	Deluxe Mouse
+	    142334.42
+	Deluxe Mouse
+	     53224.73
+	
+	경   과: 00:00:00.35
+	--------------------------------------------
+	| Id  | Operation            | Name        |
+	--------------------------------------------
+	|   0 | SELECT STATEMENT     |             |
+	|   1 |  HASH GROUP BY       |             |
+	|*  2 |   HASH JOIN          |             |
+	|*  3 |    TABLE ACCESS FULL | PRODUCTS100 |
+	|*  4 |    HASH JOIN         |             |
+	|   5 |     TABLE ACCESS FULL| SALES100    |
+	|*  6 |     TABLE ACCESS FULL| TIMES100    |
+	--------------------------------------------
+	          0  db block gets
+	       5279  consistent gets
+	       5060  physical reads
+
+
+문제 52. emp와 salgrade 테이블을 조인해서 이름과 월급과 급여등급(grade)을 출력하시오 !
+
+	select e.ename, e.sal, s.grade
+	  from emp e, salgrade s
+	  where e.sal between s.losal and s.hisal;
+
+
+문제 53. 위의 SQL의 실행계획을 해쉬조인으로 수행되게 하시오 !
+
+	select /*+ leading(s e) use_hash(e) full(s) full(e) 
+		   swap_join_inputs(s) */ 
+	       e.ename, e.sal, s.grade
+	  from emp e, salgrade s
+	  where e.sal between s.losal and s.hisal;
+
+		※ 해쉬조인은 조인의 연결고리가 =(이퀄) 조건일 때만 가능하다. 
+
+		만약에 emp와 salgrade가 대용량 테이블이어서 조인 성능이 느리다면 반드시 해쉬조인을
+		사용해야 하는데 사용 못하는 상황이면 아래와 같이 sort merge join을 수행해야한다.
+
+
+
+
+
+
+★ 조인 방법 3가지
+	1. nested loop join	: use_nl
+	2. hash join		: use_hash
+	3. sort merge join	: use_merge
+
+	select /*+ leading(s e) use_merge(e) full(s) full(e) 
+		   swap_join_inputs(s) */ 
+	       e.ename, e.sal, s.grade
+	  from emp e, salgrade s
+	  where e.sal between s.losal and s.hisal;
+
+
+★ sort merge join의 원리
+	"연결고리가 되는 컬럼의 데이터를 정렬해서 조인하는 조인 방법"
+	 대용량 데이터를 조인할 때 유리한 조인 방법
+
+	select e.ename, d.loc, e.deptno
+	  from emp e, dept d
+	  where e.deptno = d.deptno;
+		10↓<-----------10
+		10↓		
+		10↓여기까지	
+
+		20↓<-----------20
+		20↓
+		20↓
+		20↓여기까지
+
+		30↓<-----------30
+		30↓
+		30↓
+		30↓여기까지
+		 :
+		 :↓<-----------40
+
+
+		정렬을 해놓기 때문에 모든 테이블을 찾지 않는다 !
+
+
+
+문제 54. 아래의 SQL을 작성하는데 조인 순서와 조인 방법이 아래와 같이 되게 하시오 !
+
+	조인 순서 : dept ----> emp ----> salgrade
+	조인 방법 :    해쉬조인    nl조인
+
+	select /*+ leading(d e s) use_hash(e) use_nl(s) full(d) full(e) */
+	       e.ename, d.loc, e.sal, s.grade
+	  from emp e, dept d, salgrade s
+	  where e.deptno = d.deptno
+	    and e.sal between s.losal and s.hisal;
+	
+	ENAME                LOC                               SAL      GRADE
+	-------------------- -------------------------- ---------- ----------
+	KING                 NEW YORK                         5000          5
+	BLAKE                CHICAGO                          2850          4
+	CLARK                NEW YORK                         2450          4
+	JONES                DALLAS                           2975          4
+	MARTIN               CHICAGO                          1250          2
+	ALLEN                CHICAGO                          1600          3
+	TURNER               CHICAGO                          1500          3
+	JAMES                CHICAGO                           950          1
+	WARD                 CHICAGO                          1250          2
+	FORD                 DALLAS                           3000          4
+	SMITH                DALLAS                            800          1
+	SCOTT                DALLAS                           3000          4
+	ADAMS                DALLAS                           1100          1
+	MILLER               NEW YORK                         1300          2
+	
+	경   과: 00:00:00.06
+	----------------------------------------------------------------------
+	| Id  | Operation           | Name     | Rows  | Bytes | Cost (%CPU)|
+	----------------------------------------------------------------------
+	|   0 | SELECT STATEMENT    |          |     1 |    93 |    11  (10)|
+	|   1 |  NESTED LOOPS       |          |     1 |    93 |    11  (10)|
+	|*  2 |   HASH JOIN         |          |    14 |   756 |     5  (20)|
+	|   3 |    TABLE ACCESS FULL| DEPT     |     4 |    84 |     2   (0)|
+	|   4 |    TABLE ACCESS FULL| EMP      |    14 |   462 |     2   (0)|
+	|*  5 |   TABLE ACCESS FULL | SALGRADE |     1 |    39 |     0   (0)|
+	----------------------------------------------------------------------
+	         63  consistent gets
+	          0  physical reads
+	          0  redo size
+
+
+문제 55. 아래의 SQL의 조인순서와 조인방법을 아래와 같이 하시오 !
+
+	조인순서 : times ----> sales ----> products
+	조인방법 :       해쉬	      NL
+
+		select /*+ leading(t s p) use_hash(s) use_nl(p) full(s) full(t) 
+			   swap_join_inputs(t) */				
+		       p.prod_name, 
+                       t.CALENDAR_YEAR, 
+                       sum(s.amount_sold)
+		  from   sales100     s,
+          		 times100     t,
+                         products100  p
+		  where  s.time_id = t.time_id 
+		    and  s.prod_id = p.prod_id
+		    and  t.CALENDAR_YEAR in (2000,2001)
+		    and  p.prod_name like 'Deluxe%'
+		    group  by  p.prod_name, t.calendar_year;
+
+	Deluxe Mouse
+	    142334.42
+	Deluxe Mouse
+	     53224.73
+	
+	경   과: 00:00:04.33
+	------------------------------------------------------------------------------------
+	| Id  | Operation            | Name        | Rows  | Bytes | Cost (%CPU)| Time     |
+	------------------------------------------------------------------------------------
+	|   0 | SELECT STATEMENT     |             | 19750 |  2835K|   515K  (1)| 01:43:10 |
+	|   1 |  HASH GROUP BY       |             | 19750 |  2835K|   515K  (1)| 01:43:10 |
+	|   2 |   NESTED LOOPS       |             | 19750 |  2835K|   515K  (1)| 01:43:10 |
+	|*  3 |    HASH JOIN         |             |   947K|    51M|  1402   (1)| 00:00:17 |
+	|*  4 |     TABLE ACCESS FULL| TIMES100    |   731 | 16082 |    18   (0)| 00:00:01 |
+	|   5 |     TABLE ACCESS FULL| SALES100    |   947K|    31M|  1381   (1)| 00:00:17 |
+	|*  6 |    TABLE ACCESS FULL | PRODUCTS100 |     1 |    90 |     1   (0)| 00:00:01 |
+	------------------------------------------------------------------------------------
+	          0  db block gets
+	    1973531  consistent gets
+	       5060  physical reads
+
+
+문제 56. 아래와 같이 실행계획이 나오게 하시오 !
+	-----------------------------------------------------------
+	| Id  | Operation                      | Name             |
+	-----------------------------------------------------------
+	|   0 | SELECT STATEMENT               |                  |
+	|   1 |  HASH GROUP BY                 |                  |
+	|*  2 |   HASH JOIN                    |                  |
+	|*  3 |    TABLE ACCESS FULL           | TIMES100         |
+	|   4 |    NESTED LOOPS                |                  |
+	|   5 |     NESTED LOOPS               |                  |
+	|*  6 |      TABLE ACCESS FULL         | PRODUCTS100      |
+	|*  7 |      INDEX RANGE SCAN          | SALES100_PROD_ID |
+	|   8 |     TABLE ACCESS BY INDEX ROWID| SALES100         |
+	-----------------------------------------------------------
+	
+		select /*+ leading(p s t) use_nl(s) use_hash(p) full(p s) full(t)
+			   swap_join_inputs(p)
+			   index(sales100 sales100_prod_id) */				
+		       p.prod_name, 
+                       t.CALENDAR_YEAR, 
+                       sum(s.amount_sold)
+		  from   sales100     s,
+          		 times100     t,
+                         products100  p
+		  where  s.time_id = t.time_id 
+		    and  s.prod_id = p.prod_id
+		    and  t.CALENDAR_YEAR in (2000,2001)
+		    and  p.prod_name like 'Deluxe%'
+		    group  by  p.prod_name, t.calendar_year;
+
+	Deluxe Mouse
+	    142334.42
+	Deluxe Mouse
+	     53224.73
+	
+	경   과: 00:00:00.04
+	-----------------------------------------------------------
+	| Id  | Operation                      | Name             |
+	-----------------------------------------------------------
+	|   0 | SELECT STATEMENT               |                  |
+	|   1 |  HASH GROUP BY                 |                  |
+	|*  2 |   HASH JOIN                    |                  |
+	|*  3 |    TABLE ACCESS FULL           | TIMES100         |
+	|   4 |    NESTED LOOPS                |                  |
+	|   5 |     NESTED LOOPS               |                  |
+	|*  6 |      TABLE ACCESS FULL         | PRODUCTS100      |
+	|*  7 |      INDEX RANGE SCAN          | SALES100_PROD_ID |
+	|   8 |     TABLE ACCESS BY INDEX ROWID| SALES100         |
+	-----------------------------------------------------------
+	          0  db block gets
+	        199  consistent gets
+	          0  physical reads
+
+
+	
+	NESTED LOOPS 
+	 NESTED LOOPS  ※ 실행계획에 옆과 같이 NESTED LOOPS가 두번이 나오면 인덱스를 통해서 조인한 결과
+			  를 메모리에 올려놓고 다음번에 똑같은 결과를 찾으러 도인할 때 테이블 엑세스
+			  안하고 메모리에서 찾아서 출력하겠다는 뜻으로 11g에서 새로 나온 기능인
+			  advanced nested loop join이라고 한다.
+
+
+
+
+
+
+
+★ outer join 튜닝
+
+	select e.ename, d.loc
+	  from emp e, dept d
+	  where e.deptno = d.deptno;
+
+
+문제 57. 위의 조인문의 조인순서와 조인방법을 아래와 같이 되게 하시오 !
+
+	조인 순서 : dept  ---->  emp
+	조인 방법 :     해쉬조인
+
+	select /*+ leading(d e) use_hash(e) full(d) full(e) */ 
+	       e.ename, d.loc
+	  from emp e, dept d
+	  where e.deptno(+) = d.deptno;
+
+	경   과: 00:00:00.03
+	---------------------------------------------------------------------------
+	| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+	---------------------------------------------------------------------------
+	|   0 | SELECT STATEMENT   |      |    14 |   574 |     5  (20)| 00:00:01 |
+	|*  1 |  HASH JOIN OUTER   |      |    14 |   574 |     5  (20)| 00:00:01 |
+	|   2 |   TABLE ACCESS FULL| DEPT |     4 |    84 |     2   (0)| 00:00:01 |
+	|   3 |   TABLE ACCESS FULL| EMP  |    14 |   280 |     2   (0)| 00:00:01 |
+	---------------------------------------------------------------------------
+	          0  db block gets
+	         17  consistent gets
+	          0  physical reads
+
+
+문제 58. 아래의 outer join 의 조인 순서와 조인 방법을 아래와 같이 되게 하시오 !
+
+	조인 순서 : dept  ---->  emp
+	조인 방법 :     해쉬조인
+
+	select /*+ leading(d e) use_hash(e) full(d) full(e) */ 
+	       e.ename, d.loc
+	  from emp e, dept d
+	  where e.deptno = d.deptno(+);
+
+	경   과: 00:00:00.03
+	---------------------------------------------------------------------------
+	| Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+	---------------------------------------------------------------------------
+	|   0 | SELECT STATEMENT   |      |    14 |   574 |     5  (20)| 00:00:01 |
+	|*  1 |  HASH JOIN OUTER   |      |    14 |   574 |     5  (20)| 00:00:01 |
+	|   2 |   TABLE ACCESS FULL| EMP  |    14 |   280 |     2   (0)| 00:00:01 |
+	|   3 |   TABLE ACCESS FULL| DEPT |     4 |    84 |     2   (0)| 00:00:01 |
+	---------------------------------------------------------------------------
+	          0  db block gets
+	         17  consistent gets
+	          0  physical reads
+
+	※ 설명 : outer join의 조인 순서는 항상 outer join 사인이 없는 쪽에서 있는쪽으로 조인한다.
+
+	select /*+ leading(d e) use_hash(e) full(d) full(e) 
+		   swap_join_inputs(d) */ 
+	       e.ename, d.loc
+	  from emp e, dept d
+	  where e.deptno = d.deptno(+);
+
+	경   과: 00:00:00.03
+	-----------------------------------------------------------------------------
+	 Id  | Operation             | Name | Rows  | Bytes | Cost (%CPU)| Time     |
+	-----------------------------------------------------------------------------
+	   0 | SELECT STATEMENT      |      |    14 |   574 |     5  (20)| 00:00:01 |
+	*  1 |  HASH JOIN RIGHT OUTER|      |    14 |   574 |     5  (20)| 00:00:01 |
+	   2 |   TABLE ACCESS FULL   | DEPT |     4 |    84 |     2   (0)| 00:00:01 |
+	   3 |   TABLE ACCESS FULL   | EMP  |    14 |   280 |     2   (0)| 00:00:01 |
+	-----------------------------------------------------------------------------
+	         0  db block gets
+	         7  consistent gets
+	         0  physical reads
+
+
+문제 59. 아래의 SQL을 튜닝하시오 !
+
+	      select  t.calendar_year,  sum(s.amount_sold)
+	        from  sales100   s, times100  t
+	        where  s.time_id = t.time_id (+)
+	          and  t.week_ending_day_id = 1581
+	          group  by t.calendar_year;
+
+	경   과: 00:00:00.09
+--------------------------------------------------------------------------------------------------
+| Id  | Operation                     | Name             | Rows  | Bytes | Cost (%CPU)| Time     |
+--------------------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT              |                  | 13272 |   738K|   250   (1)| 00:00:03 |7
+|   1 |  HASH GROUP BY                |                  | 13272 |   738K|   250   (1)| 00:00:03 |6
+|   2 |   NESTED LOOPS                |                  |       |       |            |          |5
+|   3 |    NESTED LOOPS               |                  | 13272 |   738K|   249   (0)| 00:00:03 |3
+|*  4 |     TABLE ACCESS FULL         | TIMES100         |     7 |   245 |    18   (0)| 00:00:01 |1
+|*  5 |     INDEX RANGE SCAN          | SALES100_TIME_ID |  1896 |       |     2   (0)| 00:00:01 |2
+|   6 |    TABLE ACCESS BY INDEX ROWID| SALES100         |  1896 | 41712 |   115   (0)| 00:00:02 |4
+--------------------------------------------------------------------------------------------------
+	          0  db block gets
+	        347  consistent gets
+	          0  physical reads
+
+		create index times100_week_ending_day_id
+		  on times100(week_ending_day_id);
+
+		select t.calendar_year,  sum(s.amount_sold)
+	          from  sales100   s, times100  t
+	          where  s.time_id = t.time_id (+)
+	            and  t.week_ending_day_id = 1581
+	          group  by t.calendar_year;
+
+
+
+
+
+
+
+
+
+
